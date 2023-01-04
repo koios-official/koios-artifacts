@@ -1,0 +1,22 @@
+name: Update Repository
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Clone repository
+      run: git clone https://github.com/cardano-community/koios-artifacts.git
+    - name: Set new repository as origin
+      run: |
+        cd koios-artifacts
+        git remote remove origin
+        git remote add origin https://github.com/koios-official/koios-artifacts.git
+    - name: Push code to new repository
+      run: |
+        git push -u origin master
