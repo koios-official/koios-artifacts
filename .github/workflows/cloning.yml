@@ -19,4 +19,4 @@ jobs:
         git remote add origin https://github.com/koios-official/koios-artifacts.git
     - name: Push code to new repository
       run: |
-        git push -u origin HEAD:master
+        git push -f -u origin HEAD:master
