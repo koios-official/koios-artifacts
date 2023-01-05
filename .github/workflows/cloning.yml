@@ -13,6 +13,16 @@ jobs:
       with:
         repository: cardano-community/koios-artifacts
         ref: master
+    - name: Check for updates
+      run: |
+        git fetch origin
+        LOCAL=$(git rev-parse @)
+        REMOTE=$(git rev-parse @{u})
+        if [ $LOCAL = $REMOTE ]; then
+          echo "Up-to-date"
+        else
+          echo "Update available"
+        fi
     - name: Clone repository
       run: git clone https://github.com/cardano-community/koios-artifacts.git
     - name: Set new repository as origin
@@ -22,5 +32,5 @@ jobs:
         git remote add origin https://github.com/koios-official/koios-artifacts.git
     - name: Push code to new repository
       run: |
-        git push -f -u origin HEAD:master
+        git push -u origin HEAD:master
         
