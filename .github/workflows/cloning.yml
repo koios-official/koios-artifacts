@@ -3,9 +3,6 @@ name: Update Repository
 on:
   push:
     branches: [ master ]
-  repository:
-    name: cardano-community/koios-artifacts
-    owner: cardano-community
   workflow_dispatch:
 
 jobs:
@@ -13,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+      with:
+        repository: cardano-community/koios-artifacts
+        ref: master
     - name: Clone repository
       run: git clone https://github.com/cardano-community/koios-artifacts.git
     - name: Set new repository as origin
