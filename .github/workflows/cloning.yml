@@ -6,7 +6,6 @@ on:
   repository:
     name: cardano-community/koios-artifacts
     owner: cardano-community
-    
   workflow_dispatch:
 
 jobs:
