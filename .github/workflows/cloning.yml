@@ -1,4 +1,4 @@
-name: Update Repository
+ame: Update Repository
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
     - uses: actions/checkout@v2
       with:
         repository: cardano-community/koios-artifacts
-        ref: master
+        ref: main
     - name: Check for updates
       run: |
         git fetch origin
