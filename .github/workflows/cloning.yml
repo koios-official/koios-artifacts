@@ -3,6 +3,10 @@ name: Update Repository
 on:
   push:
     branches: [ master ]
+  repository:
+    name: cardano-community/koios-artifacts
+    owner: cardano-community
+    
   workflow_dispatch:
 
 jobs:
