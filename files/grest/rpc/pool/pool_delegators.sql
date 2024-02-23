@@ -27,6 +27,25 @@ BEGIN
         INNER JOIN public.stake_address AS sa ON sa.view = sdc.stake_address
         WHERE
           sdc.pool_id = _pool_bech32
+
+       UNION ALL
+
+       -- combine with registered delegations not in stake-dist-cache yet
+       SELECT 
+        z.stake_address_id, z.stake_address, acc_info.total_balance::numeric
+       FROM
+       ( 
+        SELECT sa.id as stake_address_id,
+          sa.view as stake_address 
+        FROM delegation d 
+	      INNER JOIN pool_hash ph on ph.view = _pool_bech32
+        INNER JOIN stake_address sa on d.pool_hash_id = ph.id and d.addr_id = sa.id
+        AND NOT EXISTS (SELECT null FROM delegation d2 WHERE d2.addr_id = d.addr_id and d2.id > d.id)
+        AND NOT EXISTS (SELECT null FROM stake_deregistration sd WHERE sd.addr_id = d.addr_id and sd.tx_id > d.tx_id)
+        AND NOT EXISTS (SELECT null FROM grest.stake_distribution_cache sdc WHERE sdc.stake_address = sa.view)
+        ) z, 
+        LATERAL grest.account_info(array[z.stake_address]) as acc_info
+
       )
 
     SELECT DISTINCT ON (ad.stake_address)
