@@ -90,6 +90,12 @@
       "pv": "gov_action17m93skslaxyd45gpr6ernkdzs852h564wsterr8l6lheu7hu7kvsqecyqdh",
       "pp": "gov_action1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpzklpgpf"
     },
+    "_voter_id": {
+      "m": "['pool1w83ux7vrwafrsuz044knxl9xxtr38q5jj2l3p28fl3g26faqqwg', 'drep1yt76he02dprm2af6x26vg76mhs2vajlg43cr9jh9dq3f2qs68ts3s']",
+      "g": "['pool1w83ux7vrwafrsuz044knxl9xxtr38q5jj2l3p28fl3g26faqqwg', 'drep1yt76he02dprm2af6x26vg76mhs2vajlg43cr9jh9dq3f2qs68ts3s']",
+      "pv": "['pool1w83ux7vrwafrsuz044knxl9xxtr38q5jj2l3p28fl3g26faqqwg', 'drep1yt76he02dprm2af6x26vg76mhs2vajlg43cr9jh9dq3f2qs68ts3s']",
+      "pp": "['pool1w83ux7vrwafrsuz044knxl9xxtr38q5jj2l3p28fl3g26faqqwg', 'drep1yt76he02dprm2af6x26vg76mhs2vajlg43cr9jh9dq3f2qs68ts3s']"
+    },
     "_pool_bech32": {
       "m": "pool155efqn9xpcf73pphkk88cmlkdwx4ulkg606tne970qswczg3asc",
       "g": "pool1xc9eywck4e20tydz4yvh5vfe0ep8whawvwz8wqkc9k046a2ypp4",
