@@ -79,9 +79,9 @@ BEGIN
       ),
       -- voting power for drep that's been inactive for too long will be treated as abstain
       inactive_drep_power AS (
-        SELECT ped.gov_action_proposal_id, SUM(amount) AS inactive_drep_power 
-        FROM drep_distr AS dd 
-          INNER JOIN proposal_epoch_data AS ped ON dd.epoch_no = epoch_of_interest
+        SELECT ped.gov_action_proposal_id, COALESCE(SUM(amount),0) AS inactive_drep_power 
+        FROM proposal_epoch_data AS ped
+        LEFT OUTER JOIN drep_distr AS dd on dd.epoch_no = epoch_of_interest
           AND dd.active_until is not NULL AND dd.active_until < epoch_of_interest
           AND NOT EXISTS (SELECT 1 FROM voting_procedure vp INNER JOIN tx t on vp.tx_id = t.id INNER JOIN block b on b.id = t.block_id AND b.epoch_no = epoch_of_interest AND vp.voter_role = 'DRep' and vp.drep_voter = dd.hash_id)        
         GROUP BY ped.gov_action_proposal_id
