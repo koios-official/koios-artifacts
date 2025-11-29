@@ -1,0 +1,37 @@
+CREATE OR REPLACE FUNCTION grest.treasury_withdrawals_1694()
+RETURNS TABLE (
+  ratified_epoch bigint,
+  enacted_epoch bigint,
+  amount text,
+  stake_address text,
+  gov_action_id text,
+  gov_action_index integer
+)
+LANGUAGE sql STABLE
+AS $$
+  SELECT
+    gap.ratified_epoch,
+    gap.enacted_epoch,
+    tw.amount::text AS amount,
+    sa."view" AS stake_address,
+    encode(tx.hash, 'hex') AS gov_action_id,
+    gap."index" AS gov_action_index
+  FROM grest.treasury_withdrawal AS tw
+  JOIN grest.gov_action_proposal AS gap
+    ON gap.id = tw.gov_action_proposal_id
+  JOIN grest.stake_address AS sa
+    ON sa.id = tw.stake_address_id
+  JOIN grest.tx as tx
+    ON tx.id = gap.tx_id
+  WHERE gap.enacted_epoch IS NOT NULL
+  ORDER BY
+    gap.enacted_epoch,
+    sa."view",
+    tx.hash,
+    gap."index",
+    tw.amount
+   ;
+$$;
+
+COMMENT ON FUNCTION grest.treasury_withdrawals_1694()
+  IS 'A list of DRep voted and enacted withdrawals made from treasury (Voltaire/CIP-1694 era)'; --noqa: LT01

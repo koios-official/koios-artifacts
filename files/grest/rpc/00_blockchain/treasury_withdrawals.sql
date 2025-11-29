@@ -31,4 +31,4 @@ AS $$
   ;
 $$;
 
-COMMENT ON FUNCTION grest.treasury_withdrawals IS 'A list of withdrawals made from treasury'; --noqa: LT01
+COMMENT ON FUNCTION grest.treasury_withdrawals IS 'A list of genesis key signed withdrawals made from treasury (Pre Voltaire/CIP-1694 era)'; --noqa: LT01
