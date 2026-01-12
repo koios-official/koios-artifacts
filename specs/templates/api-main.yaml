@@ -1035,6 +1035,9 @@ paths:
     get:
       tags:
         - Asset
+      parameters:
+        - $ref: "#/components/parameters/_asset_policy"
+        - $ref: "#/components/parameters/_asset_name"
       responses:
         "200":
           description: Success!!
