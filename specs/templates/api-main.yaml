@@ -1052,7 +1052,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
       summary: Asset List
-      description: Get the list of all native assets (paginated)
+      description: Get the list of all native assets (paginated). Use the optional parameters to filter efficiently, bypassing the performance cost of filtering the encoded output. Results are pre-sorted by policy ID and then asset name.
       operationId: asset_list
   /policy_asset_list: #RPC
     get:
