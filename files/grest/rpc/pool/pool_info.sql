@@ -66,7 +66,7 @@ BEGIN
           pic.pool_hash_id,
           pic.tx_id DESC
       )
-    SELECT
+    SELECT DISTINCT ON (api.pool_id_bech32)
       api.pool_id_bech32::varchar,
       ENCODE(ph.hash_raw::bytea, 'hex') AS pool_id_hex,
       pu.active_epoch_no,

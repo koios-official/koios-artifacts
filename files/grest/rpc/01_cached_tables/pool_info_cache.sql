@@ -63,7 +63,7 @@ BEGIN
         pr.hash_id = pu.hash_id AND
         pr.announced_tx_id > pu.registered_tx_id
       WHERE pu.registered_tx_id > _pool_info_cache_last_tx_id
-      ORDER BY hash_id, registered_tx_id, cert_index DESC
+      ORDER BY hash_id, registered_tx_id DESC, cert_index DESC
     )
 
     INSERT INTO grest.pool_info_cache (
