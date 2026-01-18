@@ -44,7 +44,7 @@ BEGIN
   RETURN QUERY
     WITH
       _all_pool_info AS (
-        SELECT DISTINCT ON (pic.pool_hash_id)
+        SELECT
           pic.pool_hash_id,
           pic.active_epoch_no,
           pic.update_id,
@@ -55,16 +55,9 @@ BEGIN
           ph.hash_raw
         FROM grest.pool_info_cache AS pic
         INNER JOIN public.pool_hash AS ph ON ph.id = pic.pool_hash_id
-        -- consider only activated updates or all updates if none were activated so far
-            AND ( (pic.active_epoch_no <= _epoch_no)
-            OR ( NOT EXISTS (SELECT 1 from grest.pool_info_cache AS pic2 where pic2.pool_hash_id = pic.pool_hash_id
-                AND pic2.active_epoch_no <= _epoch_no) ) )
         WHERE ph.hash_raw = ANY(
           SELECT cardano.bech32_decode_data(p)
           FROM UNNEST(_pool_bech32_ids) AS p)
-        ORDER BY
-          pic.pool_hash_id,
-          pic.tx_id DESC
       )
     SELECT DISTINCT ON (api.pool_id_bech32)
       api.pool_id_bech32::varchar,

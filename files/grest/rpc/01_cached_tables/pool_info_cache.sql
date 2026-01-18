@@ -198,7 +198,7 @@ BEGIN
 
   Raise NOTICE 'Last pool info cache was % blocks ago...', _last_update_block_diff;
     IF (
-      _last_update_block_diff >= 45 
+      _last_update_block_diff >= 1
       OR _last_update_block_diff < 0 -- Special case for db-sync restart rollback to epoch start
     ) THEN
       RAISE NOTICE 'Re-running...';

@@ -48,7 +48,6 @@ AS $$
       AND (tm.json->>'0') IN ('2','3') -- Filter for records using CIP-0088 version 2 (and placeholder 3)
       AND (tm.json->'1'->'1'->>0) ='1' -- Filter for Pool ID registrations only
       AND (tm.json->'1'->'3'->>0) = '2' -- Ensure Signature validation method is CIP-0008
-    ORDER BY tm.id DESC, pic.tx_id DESC
   ) AS x
   WHERE is_valid=true
     AND length(x.calidus_key)=64
