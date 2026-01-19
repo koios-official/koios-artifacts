@@ -63,7 +63,7 @@ BEGIN
         pr.hash_id = pu.hash_id AND
         pr.announced_tx_id > pu.registered_tx_id
       WHERE pu.registered_tx_id > _pool_info_cache_last_tx_id
-      ORDER BY hash_id, registered_tx_id, cert_index DESC
+      ORDER BY hash_id, registered_tx_id DESC, cert_index DESC
     )
 
     INSERT INTO grest.pool_info_cache (
@@ -198,7 +198,7 @@ BEGIN
 
   Raise NOTICE 'Last pool info cache was % blocks ago...', _last_update_block_diff;
     IF (
-      _last_update_block_diff >= 45 
+      _last_update_block_diff >= 1
       OR _last_update_block_diff < 0 -- Special case for db-sync restart rollback to epoch start
     ) THEN
       RAISE NOTICE 'Re-running...';

@@ -63,7 +63,6 @@ AS $$
     LEFT JOIN public.off_chain_pool_data AS ocpd ON ocpd.pmr_id = pic.meta_id
   ORDER BY
     pic.pool_hash_id,
-    pic.tx_id DESC,
     pasc.epoch_no DESC
   ;
 $$;
