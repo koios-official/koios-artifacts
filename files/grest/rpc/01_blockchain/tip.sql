@@ -1,8 +1,8 @@
 CREATE OR REPLACE FUNCTION grest.tip()
 RETURNS TABLE (
   hash text,
-  era varchar,
   epoch_no word31type,
+  era varchar,
   abs_slot word63type,
   epoch_slot word31type,
   block_height word31type,

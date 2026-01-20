@@ -19,6 +19,16 @@ parameters:
     in: query
     required: false
     allowEmptyValue: true
+  _epoch_no_reqd:
+    deprecated: false
+    name: _epoch_no
+    description: Epoch Number to fetch details for
+    schema:
+      type: string
+    example: "##_epoch_no_param##"
+    in: query
+    required: true
+    allowEmptyValue: false
   _stake_address:
     deprecated: false
     name: _stake_address
