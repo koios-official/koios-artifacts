@@ -199,3 +199,13 @@ parameters:
     in: query
     required: true
     allowEmptyValue: false
+  _metalabel:
+    deprecated: false
+    name: _metalabel
+    description: Metadata label (key) to filter transactions by
+    schema:
+      type: number
+    example: 721
+    in: query
+    required: true
+    allowEmptyValue: false

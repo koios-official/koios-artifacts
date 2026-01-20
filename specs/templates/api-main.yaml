@@ -474,6 +474,29 @@ paths:
       summary: Transaction Metadata Labels
       description: Get a list of all transaction metalabels
       operationId: tx_metalabels
+  /tx_by_metalabel: #RPC
+    get:
+      tags:
+        - Transactions
+      parameters:
+        - $ref: "#/components/parameters/_metalabel"
+        - $ref: "#/components/parameters/_after_block_height"
+      responses:
+        "200":
+          description: Success!!
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/tx_by_metalabel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      summary: Transactions by Metadata Label
+      description: Get a list of all transactions that include a specific metadata label (key)
+      operationId: tx_by_metalabel
   /submittx: #submit-api
     post:
       tags:
