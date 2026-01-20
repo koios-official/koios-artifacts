@@ -721,6 +721,26 @@ paths:
         - color: red
           label: "Deprecated"
 
+  /address_list: #RPC
+    get:
+      tags:
+        - Address
+      responses:
+        "200":
+          description: Success!!
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/address_list"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      summary: Address List
+      description: Get a list of all addresses
+      operationId: address_list
   /address_info: #RPC
     post:
       tags:
@@ -4652,6 +4672,33 @@ components:
             $ref: "#/components/schemas/tx_info/items/properties/native_scripts"
           plutus_contracts:
             $ref: "#/components/schemas/tx_info/items/properties/plutus_contracts"
+
+    address_list:
+      description: Array of address IDs
+      type: array
+      items:
+        type: object
+        properties:
+          address:
+            $ref: "#/components/schemas/utxo_infos/items/properties/address"
+          address_hex:
+            type: string
+            description: Cardano payment address in hex format
+            example: 018e8d58579c0b26d64f0e8e93c1febbe73b8f6a5a3f1e4b4e8c5a8e9d1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4
+          script_address:
+            type: boolean
+            description: Signifies whether the address is a script address
+            example: false
+          payment_cred:
+            anyOf:
+              - type: string
+              - type: "null"
+            description: Payment credential in hex format
+            example: 8e8d58579c0b26d64f0e8e93c1febbe73b8f6a5a3f1e4b4e
+          stake_address:
+            anyOf:
+              - $ref: "#/components/schemas/account_history/items/properties/stake_address"
+              - type: "null"
 
     address_info:
       description: Array of information for address(es)

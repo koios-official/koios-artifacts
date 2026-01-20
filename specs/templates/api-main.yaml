@@ -576,6 +576,26 @@ paths:
         - color: red
           label: "Deprecated"
 
+  /address_list: #RPC
+    get:
+      tags:
+        - Address
+      responses:
+        "200":
+          description: Success!!
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/address_list"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      summary: Address List
+      description: Get a list of all addresses
+      operationId: address_list
   /address_info: #RPC
     post:
       tags:
