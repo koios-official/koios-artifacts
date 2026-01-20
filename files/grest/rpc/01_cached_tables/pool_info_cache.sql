@@ -147,7 +147,8 @@ BEGIN
           meta_id = EXCLUDED.meta_id,
           meta_url = EXCLUDED.meta_url,
           meta_hash = EXCLUDED.meta_hash,
-          pool_status = EXCLUDED.pool_status;
+          pool_status = EXCLUDED.pool_status,
+          retiring_epoch = EXCLUDED.retiring_epoch;
 
     INSERT INTO grest.control_table (key, last_value)
       VALUES (
