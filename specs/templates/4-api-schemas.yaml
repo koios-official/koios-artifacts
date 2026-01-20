@@ -2304,6 +2304,24 @@ schemas:
           type: string
           description: A distinct known metalabel
           example: "721"
+  tx_by_metalabel:
+    description: Array of transactions containing the queried metadata label
+    type: array
+    items:
+      type: object
+      properties:
+        tx_hash:
+          $ref: "#/components/schemas/utxo_infos/items/properties/tx_hash"
+        block_hash:
+          $ref: "#/components/schemas/blocks/items/properties/hash"
+        block_height:
+          $ref: "#/components/schemas/blocks/items/properties/block_height"
+        epoch_no:
+          $ref: "#/components/schemas/blocks/items/properties/epoch_no"
+        absolute_slot:
+          $ref: "#/components/schemas/blocks/items/properties/abs_slot"
+        tx_timestamp:
+          $ref: "#/components/schemas/blocks/items/properties/block_time"
   utxo_infos:
     description: Array of complete UTxO information
     type: array
