@@ -26,57 +26,35 @@ BEGIN
     WHERE raw = DECODE((SELECT grest.cip129_drep_id_to_hex(_drep_id)), 'hex')
       AND has_script = grest.cip129_drep_id_has_script(_drep_id);
 
-    SELECT INTO last_reg_tx_id MAX(tx_id)
+    SELECT INTO last_reg_tx_id COALESCE(MAX(tx_id), 0)
     FROM public.drep_registration
     WHERE drep_hash_id = drep_idx
       AND (deposit IS NOT NULL AND deposit >= 0);
-
-    IF last_reg_tx_id IS NULL OR EXISTS (
-      SELECT 1
-      FROM public.drep_registration
-      WHERE drep_hash_id = drep_idx
-        AND deposit IS NOT NULL
-        AND deposit < 0
-        AND tx_id > last_reg_tx_id
-      LIMIT 1
-    ) THEN
-      RETURN; -- DRep not registered or de-registered, no need to continue
-    END IF;
   END IF;
 
   RETURN QUERY (
     WITH
       _all_delegations AS (
-        SELECT *
+        SELECT 
+          latest.addr_id,
+          latest.tx_id,
+          latest.drep_hash_id
         FROM (
-          SELECT
-            DISTINCT ON (last_delegation.addr_id) last_delegation.addr_id,
-            last_delegation.tx_id,
-            last_delegation.drep_hash_id,
-            sd.tx_id AS dereg_tx_id
-          FROM (
-            SELECT
-              DISTINCT ON (dv1.addr_id) dv1.addr_id,
-              dv1.tx_id,
-              dv1.drep_hash_id
-            FROM
-              public.delegation_vote AS dv1
-            WHERE
-              dv1.addr_id = ANY(
-                SELECT dv2.addr_id
-                FROM public.delegation_vote AS dv2
-                WHERE dv2.drep_hash_id = drep_idx
-                  AND dv2.tx_id >= last_reg_tx_id
-              )
-            ORDER BY
-              dv1.addr_id, dv1.tx_id DESC
-          ) AS last_delegation
-          LEFT JOIN stake_deregistration AS sd ON last_delegation.addr_id = sd.addr_id AND last_delegation.tx_id < sd.tx_id
-          WHERE last_delegation.drep_hash_id = drep_idx
-          ORDER BY
-            last_delegation.addr_id, sd.tx_id NULLS LAST
-        ) AS all_delegations_w_dereg
-        WHERE all_delegations_w_dereg.dereg_tx_id IS NULL
+          SELECT DISTINCT ON (dv.addr_id)
+            dv.addr_id,
+            dv.tx_id,
+            dv.drep_hash_id
+          FROM public.delegation_vote AS dv
+          WHERE dv.tx_id >= last_reg_tx_id
+          ORDER BY dv.addr_id, dv.tx_id DESC
+        ) AS latest
+        WHERE latest.drep_hash_id = drep_idx
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.stake_deregistration sd 
+            WHERE sd.addr_id = latest.addr_id 
+              AND sd.tx_id > latest.tx_id
+          )
       )
 
     SELECT
