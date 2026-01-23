@@ -3,7 +3,7 @@ RETURNS TABLE (
   drep_id text,
   hex text,
   has_script boolean,
-  registered boolean,
+  drep_status text,
   deposit text,
   active boolean,
   expires_epoch_no numeric,
@@ -125,7 +125,12 @@ BEGIN
       END AS drep_id,
       ENCODE(dh.raw, 'hex')::text AS hex,
       dh.has_script AS has_script,
-      (CASE WHEN starts_with(dh.view,'drep_always') OR (COALESCE(dr.deposit, 0) >= 0 AND dr.drep_hash_id IS NOT NULL) THEN TRUE ELSE FALSE END) AS registered,
+      (CASE
+        WHEN starts_with(dh.view,'drep_always') THEN 'registered'
+        WHEN dr.drep_hash_id IS NULL THEN 'not_registered'
+        WHEN dr.deposit < 0 THEN 'deregistered'
+        ELSE 'registered'
+      END) AS drep_status,
       (CASE WHEN (dr.deposit < 0) OR starts_with(dh.view,'drep_always') THEN NULL ELSE ds.deposit END)::text AS deposit,
       (CASE WHEN starts_with(dh.view,'drep_always') THEN TRUE ELSE COALESCE(dr.deposit, 0) >= 0 AND (ds.active OR COALESCE(dd.active_until, 0) > curr_epoch) END) AS active,
       (CASE WHEN COALESCE(dr.deposit, 0) >= 0 THEN GREATEST(ds.expires_epoch_no, COALESCE(dd.active_until, 0)) ELSE NULL END) AS expires_epoch_no,
