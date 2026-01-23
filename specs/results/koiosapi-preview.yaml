@@ -5953,10 +5953,14 @@ components:
             type: boolean
             description: Flag which shows if this credential is a script hash
             example: false
-          registered:
-            type: boolean
-            description: Flag to show if the DRep is currently registered
-            example: false
+          drep_status:
+            type: string
+            enum:
+              - registered
+              - deregistered
+              - not_registered
+            description: DRep's current registration status
+            example: registered
           deposit:
             anyOf:
               - type: string
@@ -6015,8 +6019,8 @@ components:
             $ref: "#/components/schemas/drep_info/items/properties/hex"
           has_script:
             $ref: "#/components/schemas/drep_info/items/properties/has_script"
-          registered:
-            $ref: "#/components/schemas/drep_info/items/properties/registered"
+          drep_status:
+            $ref: "#/components/schemas/drep_info/items/properties/drep_status"
     drep_delegators:
       description: List of all delegators by requested delegated representative (DRep)
       type: array
