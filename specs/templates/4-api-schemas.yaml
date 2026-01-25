@@ -45,7 +45,7 @@ schemas:
         notes:
           type: string
           example: Plomin HF
-          description: Additional information about when this protocol update was pushed (eg: if there is a fork name associated)
+          description: Additional information about when this protocol update was pushed (if there is a fork name associated)
         epoch_no:
           $ref: "#/components/schemas/epoch_info/items/properties/epoch_no"
         first_block_time:
@@ -1424,6 +1424,30 @@ schemas:
         plutus_contracts:
           $ref: "#/components/schemas/tx_info/items/properties/plutus_contracts"
 
+  address_list:
+    description: Array of information for address(es)
+    type: array
+    items:
+      type: object
+      properties:
+        address:
+          $ref: "#/components/schemas/utxo_infos/items/properties/address"
+        address_hex:
+          type: string
+          description: Cardano address in hex format
+          example: 60f879af535c02e37bf77fb3b5f51d017229fe47995c37b9aca9e0091c
+        has_script:
+          $ref: "#/components/schemas/drep_info/items/properties/has_script"
+        payment_cred:
+          $ref: "#/components/schemas/utxo_infos/items/properties/payment_cred"
+        stake_address:
+          anyOf:
+            - $ref: "#/components/schemas/account_history/items/properties/stake_address"
+            - type: "null"
+        stake_address_hex:
+          anyOf:
+            - $ref: "#/components/schemas/account_list/items/properties/stake_address_hex"
+            - type: "null"
   address_info:
     description: Array of information for address(es)
     type: array
@@ -2280,6 +2304,24 @@ schemas:
           type: string
           description: A distinct known metalabel
           example: "721"
+  tx_by_metalabel:
+    description: Array of transactions containing the queried metadata label
+    type: array
+    items:
+      type: object
+      properties:
+        tx_hash:
+          $ref: "#/components/schemas/utxo_infos/items/properties/tx_hash"
+        block_hash:
+          $ref: "#/components/schemas/blocks/items/properties/hash"
+        block_height:
+          $ref: "#/components/schemas/blocks/items/properties/block_height"
+        epoch_no:
+          $ref: "#/components/schemas/blocks/items/properties/epoch_no"
+        absolute_slot:
+          $ref: "#/components/schemas/blocks/items/properties/abs_slot"
+        tx_timestamp:
+          $ref: "#/components/schemas/blocks/items/properties/block_time"
   utxo_infos:
     description: Array of complete UTxO information
     type: array
