@@ -20,7 +20,7 @@ BEGIN
         LEFT JOIN grest.era_map AS em ON ep.protocol_major::text = em.protocol_major::text AND ep.protocol_minor::text = em.protocol_minor::text
       WHERE b.epoch_no = _epoch_no::word31type
       GROUP BY
-        b.proto_major, b.proto_minor;
+        b.proto_major, b.proto_minor, em.era;
   ELSE
     RETURN QUERY
       SELECT
@@ -33,7 +33,7 @@ BEGIN
         LEFT JOIN grest.era_map AS em ON ep.protocol_major::text = em.protocol_major::text AND ep.protocol_minor::text = em.protocol_minor::text
       WHERE b.epoch_no = (SELECT MAX(no) FROM epoch)
       GROUP BY
-        b.proto_major, b.proto_minor;
+        b.proto_major, b.proto_minor, em.era;
   END IF;
 END;
 $$;
