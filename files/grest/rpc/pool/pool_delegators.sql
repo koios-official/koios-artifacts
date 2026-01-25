@@ -10,8 +10,10 @@ AS $$
 #variable_conflict use_column
 DECLARE
   _pool_id bigint;
+  _current_epoch bigint;
 BEGIN
   SELECT id INTO _pool_id FROM pool_hash WHERE pool_hash.hash_raw = cardano.bech32_decode_data(_pool_bech32);
+  SELECT MAX(no) INTO _current_epoch FROM epoch;
 
   RETURN QUERY
     WITH
@@ -35,17 +37,18 @@ BEGIN
         SELECT
           sa.id as stake_address_id,
           sa.hash_raw AS stake_address_raw,
-          COALESCE(SUM(acc_info.value::numeric), 0) AS total_balance
+          COALESCE(SUM(acc_utxos.value::numeric), 0) AS total_balance
         FROM delegation AS d
         INNER JOIN stake_address AS sa ON d.addr_id = sa.id
         LEFT JOIN LATERAL
-          grest.account_utxos(ARRAY[grest.cip5_hex_to_stake_addr(sa.hash_raw)], false) AS acc_info
+          grest.account_utxos(ARRAY[grest.cip5_hex_to_stake_addr(sa.hash_raw)], false) AS acc_utxos
           ON TRUE
         WHERE 
           d.pool_hash_id = _pool_id
           AND NOT EXISTS (SELECT 1 FROM delegation AS d2 WHERE d2.addr_id = d.addr_id AND d2.id > d.id)
           AND NOT EXISTS (SELECT 1 FROM stake_deregistration AS sd WHERE sd.addr_id = d.addr_id AND sd.tx_id > d.tx_id)
           AND NOT EXISTS (SELECT 1 FROM grest.stake_distribution_cache AS sdc WHERE sdc.stake_address_id = sa.id)
+          AND EXISTS (SELECT 1 FROM public.epoch_stake es WHERE es.addr_id = d.addr_id AND es.epoch_no = _current_epoch)
         GROUP BY
           sa.id,
           sa.hash_raw
@@ -77,8 +80,10 @@ AS $$
 #variable_conflict use_column
 DECLARE
   _pool_id bigint;
+  _current_epoch bigint;
 BEGIN
   SELECT id INTO _pool_id FROM pool_hash WHERE pool_hash.hash_raw = cardano.bech32_decode_data(_pool_bech32);
+  SELECT MAX(no) INTO _current_epoch FROM epoch;
 
   RETURN QUERY
     WITH
@@ -99,25 +104,24 @@ BEGIN
         UNION ALL
 
         -- combine with registered delegations not in stake-dist-cache yet
-        SELECT 
-          z.stake_address_id, z.stake_address_raw, SUM(acc_info.value::numeric) AS total_balance
-        FROM
-          ( 
-            SELECT
-              sa.id AS stake_address_id,
-              sa.hash_raw AS stake_address_raw
-            FROM delegation AS d 
-              INNER JOIN stake_address AS sa ON d.addr_id = sa.id and d.pool_hash_id = _pool_id
-              AND NOT EXISTS (SELECT null FROM delegation AS d2 WHERE d2.addr_id = d.addr_id AND d2.id > d.id)
-              AND NOT EXISTS (SELECT null FROM stake_deregistration AS sd WHERE sd.addr_id = d.addr_id AND sd.tx_id > d.tx_id)
-              -- AND NOT grest.is_dangling_delegation(d.id)
-              AND NOT EXISTS (SELECT null FROM grest.stake_distribution_cache AS sdc WHERE sdc.stake_address_id = sa.id)
-            WHERE d.active_epoch_no > (SELECT MAX(no) FROM epoch)
-          ) z,
-          LATERAL grest.account_utxos(array[(SELECT grest.cip5_hex_to_stake_addr(z.stake_address_raw))], false) AS acc_info
+        SELECT
+          sa.id as stake_address_id,
+          sa.hash_raw AS stake_address_raw,
+          COALESCE(SUM(acc_utxos.value::numeric), 0) AS total_balance
+        FROM delegation AS d
+        INNER JOIN stake_address AS sa ON d.addr_id = sa.id
+        LEFT JOIN LATERAL
+          grest.account_utxos(ARRAY[grest.cip5_hex_to_stake_addr(sa.hash_raw)], false) AS acc_utxos
+          ON TRUE
+        WHERE 
+          d.pool_hash_id = _pool_id
+          AND NOT EXISTS (SELECT 1 FROM delegation AS d2 WHERE d2.addr_id = d.addr_id AND d2.id > d.id)
+          AND NOT EXISTS (SELECT 1 FROM stake_deregistration AS sd WHERE sd.addr_id = d.addr_id AND sd.tx_id > d.tx_id)
+          AND NOT EXISTS (SELECT 1 FROM grest.stake_distribution_cache AS sdc WHERE sdc.stake_address_id = sa.id)
+          AND EXISTS (SELECT 1 FROM public.epoch_stake es WHERE es.addr_id = d.addr_id AND es.epoch_no = _current_epoch)
         GROUP BY
-          z.stake_address_id,
-          z.stake_address_raw
+          sa.id,
+          sa.hash_raw
       )
 
     SELECT 
