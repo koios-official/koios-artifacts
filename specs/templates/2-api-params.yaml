@@ -19,6 +19,16 @@ parameters:
     in: query
     required: false
     allowEmptyValue: true
+  _epoch_no_reqd:
+    deprecated: false
+    name: _epoch_no
+    description: Epoch Number to fetch details for
+    schema:
+      type: string
+    example: "##_epoch_no_param##"
+    in: query
+    required: true
+    allowEmptyValue: false
   _stake_address:
     deprecated: false
     name: _stake_address
@@ -196,6 +206,16 @@ parameters:
     example: "##_proposal_id_param##"
     schema:
       type: string
+    in: query
+    required: true
+    allowEmptyValue: false
+  _metalabel:
+    deprecated: false
+    name: _metalabel
+    description: Metadata label (key) to filter transactions by
+    schema:
+      type: number
+    example: 721
     in: query
     required: true
     allowEmptyValue: false
