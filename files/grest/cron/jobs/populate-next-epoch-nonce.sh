@@ -25,8 +25,13 @@ if [[ -z $min_slot ]]; then
 fi
 #echo "Initialized min_slot to $min_slot"
 
-current_epoch=$(curl -s "${PROM_URL}" | sed -n 's/^cardano_node_metrics_epoch_int //p')
-current_slot_in_epoch=$(curl -s "${PROM_URL}" | sed -n 's/^cardano_node_metrics_slotInEpoch_int //p')
+read -r current_epoch current_slot_in_epoch <<< "$(
+  curl -s "${PROM_URL}" | awk '
+    $1=="cardano_node_metrics_epoch_int"        { epoch=$2 }
+    $1=="cardano_node_metrics_slotInEpoch_int"  { slot=$2 }
+    END { print epoch, slot }
+  '
+)"
 next_epoch=$((current_epoch + 1))
 
 [[ ${current_slot_in_epoch} -ge ${min_slot} ]] &&
