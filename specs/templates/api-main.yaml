@@ -1840,6 +1840,29 @@ paths:
       summary: Pool Delegators History
       description: Return information about active delegators (incl. history) for a given pool and epoch number (all epochs if not specified).
       operationId: pool_delegators_history
+  /pool_invalid_delegators: #RPC
+    get:
+      tags:
+        - Pool
+      parameters:
+        - $ref: "#/components/parameters/_pool_bech32"
+        - $ref: "#/components/parameters/_epoch_no"
+      responses:
+        "200":
+          description: Success!!
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/pool_invalid_delegators"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      summary: Pool Invalid Delegators
+      description: Return information about delegators for a given pool that are invalid for the specified epoch.
+      operationId: pool_invalid_delegators
   /pool_blocks: #RPC
     get:
       tags:

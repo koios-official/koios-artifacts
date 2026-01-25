@@ -50,3 +50,5 @@ BEGIN
       );
 END;
 $$;
+
+COMMENT ON FUNCTION grest.pool_invalid_delegators IS 'Return all delegators for a specific pool that are invalid for the specified epoch';

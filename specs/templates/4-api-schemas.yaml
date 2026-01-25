@@ -635,6 +635,16 @@ schemas:
           type: number
           description: Epoch number for the delegation history
           example: 324
+  pool_invalid_delegators:
+    description: Array of pool delegators that are invalid for the specified epoch
+    type: array
+    items:
+      type: object
+      properties:
+        stake_address:
+          $ref: "#/components/schemas/account_history/items/properties/stake_address"
+        epoch_no:
+          $ref: "#/components/schemas/epoch_info/items/properties/epoch_no"
   pool_blocks:
     description: Array of blocks created by pool
     type: array
