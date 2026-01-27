@@ -1985,6 +1985,29 @@ paths:
       summary: Pool Delegators History
       description: Return information about active delegators (incl. history) for a given pool and epoch number (all epochs if not specified).
       operationId: pool_delegators_history
+  /pool_invalid_delegators: #RPC
+    get:
+      tags:
+        - Pool
+      parameters:
+        - $ref: "#/components/parameters/_pool_bech32"
+        - $ref: "#/components/parameters/_epoch_no"
+      responses:
+        "200":
+          description: Success!!
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/pool_invalid_delegators"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+      summary: Pool Invalid Delegators
+      description: Return information about delegators for a given pool that are invalid for the specified epoch.
+      operationId: pool_invalid_delegators
   /pool_blocks: #RPC
     get:
       tags:
@@ -2647,9 +2670,9 @@ components:
       in: query
       required: true
       allowEmptyValue: false
-    _metalabel:
+    _label:
       deprecated: false
-      name: _metalabel
+      name: _label
       description: Metadata label (key) to filter transactions by
       schema:
         type: number
@@ -3929,6 +3952,16 @@ components:
             type: number
             description: Epoch number for the delegation history
             example: 324
+    pool_invalid_delegators:
+      description: Array of pool delegators that are invalid for the specified epoch
+      type: array
+      items:
+        type: object
+        properties:
+          stake_address:
+            $ref: "#/components/schemas/account_history/items/properties/stake_address"
+          epoch_no:
+            $ref: "#/components/schemas/epoch_info/items/properties/epoch_no"
     pool_blocks:
       description: Array of blocks created by pool
       type: array
@@ -6060,10 +6093,14 @@ components:
             type: boolean
             description: Flag which shows if this credential is a script hash
             example: false
-          registered:
-            type: boolean
-            description: Flag to show if the DRep is currently registered
-            example: false
+          drep_status:
+            type: string
+            enum:
+              - registered
+              - deregistered
+              - not_registered
+            description: DRep's current registration status
+            example: registered
           deposit:
             anyOf:
               - type: string
@@ -6122,8 +6159,8 @@ components:
             $ref: "#/components/schemas/drep_info/items/properties/hex"
           has_script:
             $ref: "#/components/schemas/drep_info/items/properties/has_script"
-          registered:
-            $ref: "#/components/schemas/drep_info/items/properties/registered"
+          drep_status:
+            $ref: "#/components/schemas/drep_info/items/properties/drep_status"
     drep_delegators:
       description: List of all delegators by requested delegated representative (DRep)
       type: array

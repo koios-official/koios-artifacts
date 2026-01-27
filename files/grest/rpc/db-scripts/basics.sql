@@ -97,18 +97,18 @@ CREATE TABLE grest.era_map (
 );
 
 INSERT INTO grest.era_map
-  VALUES
-    ('Byron','Byron',0,0,NULL,'Ouroboros Classic',NULL),
-    ('Byron','Byron',1,0,NULL,'Ouroboros BFT',NULL),
-    ('Shelley','Shelley',2,0,'TPraos','Ouroboros Praos',NULL),
-    ('Goguen','Allegra',3,0,'TPraos','Ouroboros Praos',NULL),
-    ('Goguen','Mary',4,0,'TPraos','Ouroboros Praos',NULL),
-    ('Goguen','Alonzo',5,0,'TPraos','Ouroboros Praos',NULL),
-    ('Goguen','Alonzo',6,0,'TPraos','Ouroboros Praos','intra-era hardfork'),
-    ('Goguen','Babbage',7,0,'Praos','Ouroboros Praos','Vasil HF'),
-    ('Goguen','Babbage',8,0,'Praos','Ouroboros Praos','Valentine HF'),
-    ('Voltaire','Conway',9,0,'Praos','Ouroboros Genesis/Praos','Chang HF'),
-    ('Voltaire','Conway',10,0,'Praos','Ouroboros Genesis/Praos','Plomin HF');
+VALUES
+('Byron', 'Byron', 0, 0, NULL, 'Ouroboros Classic', NULL),
+('Byron', 'Byron', 1, 0, NULL, 'Ouroboros BFT', NULL),
+('Shelley', 'Shelley', 2, 0, 'TPraos', 'Ouroboros Praos', NULL),
+('Goguen', 'Allegra', 3, 0, 'TPraos', 'Ouroboros Praos', NULL),
+('Goguen', 'Mary', 4, 0, 'TPraos', 'Ouroboros Praos', NULL),
+('Goguen', 'Alonzo', 5, 0, 'TPraos', 'Ouroboros Praos', NULL),
+('Goguen', 'Alonzo', 6, 0, 'TPraos', 'Ouroboros Praos', 'intra-era hardfork'),
+('Goguen', 'Babbage', 7, 0, 'Praos', 'Ouroboros Praos', 'Vasil HF'),
+('Goguen', 'Babbage', 8, 0, 'Praos', 'Ouroboros Praos', 'Valentine HF'),
+('Voltaire', 'Conway', 9, 0, 'Praos', 'Ouroboros Genesis/Praos', 'Chang HF'),
+('Voltaire', 'Conway', 10, 0, 'Praos', 'Ouroboros Genesis/Praos', 'Plomin HF');
 
 -- POOL_GROUPS TABLE --
 DROP TABLE IF EXISTS grest.pool_groups;

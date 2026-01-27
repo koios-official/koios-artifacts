@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION grest.reference_script_utxos(_script_hashes text[])
+CREATE OR REPLACE FUNCTION grest.reference_script_utxos(_script_hashes text [])
 RETURNS TABLE (
   script_hash text,
   tx_hash text,

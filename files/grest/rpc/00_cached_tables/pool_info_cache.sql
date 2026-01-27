@@ -205,7 +205,7 @@ BEGIN
       RAISE NOTICE 'Re-running...';
       CALL grest.update_pool_info_cache ();
     ELSE
-      RAISE NOTICE 'Minimum block height difference(45) for update not reached, skipping...';
+      RAISE NOTICE 'Minimum block height difference for update not reached, skipping...';
     END IF;
 
     RETURN;
