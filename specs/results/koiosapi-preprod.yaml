@@ -719,9 +719,9 @@ paths:
       operationId: tx_outs_epoch
   /tx_utxos: #RPC
     post:
+      deprecated: true
       tags:
         - Transactions
-      deprecated: true
       requestBody:
         $ref: "#/components/requestBodies/tx_ids"
       responses:
@@ -1080,6 +1080,7 @@ paths:
       operationId: account_reward_history
   /account_updates: #RPC
     post:
+      deprecated: true
       tags:
         - Stake Account
       requestBody:
