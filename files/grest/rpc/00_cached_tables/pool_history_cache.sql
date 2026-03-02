@@ -51,6 +51,18 @@ BEGIN
   RETURN QUERY
   
   WITH
+    epoch_constants AS (
+      SELECT
+        e.no AS epoch_no,
+        ep.optimal_pool_count,
+        (SELECT supply FROM grest.totals(e.no)) AS total_supply,
+        easc.amount AS global_active_stake
+      FROM epoch AS e
+      JOIN epoch_param AS ep ON ep.epoch_no = e.no
+      LEFT JOIN grest.epoch_active_stake_cache AS easc ON easc.epoch_no = e.no
+      WHERE e.no >= _epoch_no_to_insert_from
+        AND (_epoch_no_until IS NULL OR e.no <= _epoch_no_until)
+    ),
     blockcounts AS (
       SELECT
         sl.pool_hash_id,
@@ -65,11 +77,12 @@ BEGIN
         sl.pool_hash_id,
         b.epoch_no
     ),
-    leadertotals AS (
+    reward_totals AS (
       SELECT
         r.pool_id,
         r.earned_epoch,
-        COALESCE(SUM(r.amount), 0) AS leadertotal
+        COALESCE(SUM(CASE WHEN r.type = 'leader' THEN r.amount ELSE 0 END), 0) AS leadertotal,
+        COALESCE(SUM(CASE WHEN r.type = 'member' THEN r.amount ELSE 0 END), 0) AS memtotal
       FROM reward AS r
       WHERE r.type = 'leader'
         AND (_pool_bech32 IS NULL OR r.pool_id = ANY(_pool_ids))
@@ -116,6 +129,14 @@ BEGIN
         SUM(es.amount) AS active_stake,
         COUNT(1) AS delegator_cnt
       FROM epoch_stake AS es
+      LEFT JOIN LATERAL (
+        SELECT pup.margin, pup.fixed_cost
+        FROM pool_update pup
+        WHERE pup.hash_id = es.pool_id
+          AND pup.active_epoch_no <= es.epoch_no
+        ORDER BY pup.id DESC
+        LIMIT 1
+      ) AS lpu ON TRUE # last_pool_update
       WHERE es.epoch_no >= _epoch_no_to_insert_from
         AND (_epoch_no_until IS NULL OR es.epoch_no < _epoch_no_until)
         AND (_pool_bech32 IS NULL OR es.pool_id = ANY(_pool_ids))
@@ -137,7 +158,7 @@ BEGIN
       0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
         ELSE
           CASE
@@ -151,7 +172,7 @@ BEGIN
       0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
       ELSE
         CASE
@@ -163,16 +184,16 @@ BEGIN
     CASE COALESCE(b.block_cnt, 0)
       WHEN 0 THEN 0
     ELSE
-      CASE COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
-        ELSE COALESCE(m.memtotal, 0)
+        ELSE COALESCE(rt.memtotal, 0)
       END
     END::double precision AS member_rewards,
     CASE COALESCE(b.block_cnt, 0)
       WHEN 0 THEN 0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
         ELSE
           CASE
@@ -203,7 +224,7 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION grest.get_pool_history_data_bulk IS 'Pool block production and reward history from a given epoch until optional later epoch, for all or particular subset of pools'; -- noqa: LT01
+COMMENT ON FUNCTION grest.get_pool_history_data_bulk IS 'Pool block production and reward history from a given epoch until optional later epoch, for all OR particular subset of pools'; -- noqa: LT01
 
 DROP FUNCTION IF EXISTS grest.pool_history_cache_update;
 
