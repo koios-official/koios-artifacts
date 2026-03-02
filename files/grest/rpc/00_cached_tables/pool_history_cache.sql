@@ -65,28 +65,14 @@ BEGIN
         sl.pool_hash_id,
         b.epoch_no
     ),
-    leadertotals AS (
+    reward_totals AS (
       SELECT
         r.pool_id,
         r.earned_epoch,
-        COALESCE(SUM(r.amount), 0) AS leadertotal
+        COALESCE(SUM(CASE WHEN r.type = 'leader' THEN r.amount ELSE 0 END), 0) AS leadertotal,
+        COALESCE(SUM(CASE WHEN r.type = 'member' THEN r.amount ELSE 0 END), 0) AS memtotal
       FROM reward AS r
-      WHERE r.type = 'leader'
-        AND (_pool_bech32 IS NULL OR r.pool_id = ANY(_pool_ids))
-        AND r.earned_epoch >= _epoch_no_to_insert_from
-        AND (_epoch_no_until IS NULL OR r.earned_epoch < _epoch_no_until)
-      GROUP BY
-        r.pool_id,
-        r.earned_epoch
-    ),
-
-    membertotals AS (
-      SELECT
-        r.pool_id,
-        r.earned_epoch,
-        COALESCE(SUM(r.amount), 0) AS memtotal
-      FROM reward AS r
-      WHERE r.type = 'member'
+      WHERE r.type IN ('leader', 'member')
         AND (_pool_bech32 IS NULL OR r.pool_id = ANY(_pool_ids))
         AND r.earned_epoch >= _epoch_no_to_insert_from
         AND (_epoch_no_until IS NULL OR r.earned_epoch < _epoch_no_until)
@@ -137,12 +123,12 @@ BEGIN
       0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
         ELSE
           CASE
-            WHEN COALESCE(l.leadertotal, 0) < pu.fixed_cost THEN COALESCE(l.leadertotal, 0)
-            ELSE ROUND(pu.fixed_cost + (((COALESCE(m.memtotal, 0) + COALESCE(l.leadertotal, 0)) - pu.fixed_cost) * pu.margin))
+            WHEN COALESCE(rt.leadertotal, 0) < pu.fixed_cost THEN COALESCE(rt.leadertotal, 0)
+            ELSE ROUND(pu.fixed_cost + (((COALESCE(rt.memtotal, 0) + COALESCE(rt.leadertotal, 0)) - pu.fixed_cost) * pu.margin))
           END
       END
     END AS pool_fees,
@@ -151,35 +137,35 @@ BEGIN
       0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
       ELSE
         CASE
-          WHEN COALESCE(l.leadertotal, 0) < pu.fixed_cost THEN COALESCE(m.memtotal, 0)
-          ELSE ROUND(COALESCE(m.memtotal, 0) + (COALESCE(l.leadertotal, 0) - (pu.fixed_cost + (((COALESCE(m.memtotal, 0) + COALESCE(l.leadertotal, 0)) - pu.fixed_cost) * pu.margin))))
+          WHEN COALESCE(rt.leadertotal, 0) < pu.fixed_cost THEN COALESCE(rt.memtotal, 0)
+          ELSE ROUND(COALESCE(rt.memtotal, 0) + (COALESCE(rt.leadertotal, 0) - (pu.fixed_cost + (((COALESCE(rt.memtotal, 0) + COALESCE(rt.leadertotal, 0)) - pu.fixed_cost) * pu.margin))))
         END
       END
     END AS deleg_rewards,
     CASE COALESCE(b.block_cnt, 0)
       WHEN 0 THEN 0
     ELSE
-      CASE COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
-        ELSE COALESCE(m.memtotal, 0)
+        ELSE COALESCE(rt.memtotal, 0)
       END
     END::double precision AS member_rewards,
     CASE COALESCE(b.block_cnt, 0)
       WHEN 0 THEN 0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
         ELSE
           CASE
-            WHEN COALESCE(l.leadertotal, 0) < pu.fixed_cost THEN ROUND((((POW((LEAST(((COALESCE(m.memtotal, 0)) / (NULLIF(asa.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
+            WHEN COALESCE(rt.leadertotal, 0) < pu.fixed_cost THEN ROUND((((POW((LEAST(((COALESCE(rt.memtotal, 0)) / (NULLIF(asa.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
             -- using LEAST AS a way to prevent overflow, in CASE of dodgy database data (e.g. giant rewards / tiny active stake)
-            ELSE ROUND((((POW((LEAST((((COALESCE(m.memtotal, 0) + (COALESCE(l.leadertotal, 0) - (pu.fixed_cost + (((COALESCE(m.memtotal, 0)
-                + COALESCE(l.leadertotal, 0)) - pu.fixed_cost) * pu.margin))))) / (NULLIF(asa.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
+            ELSE ROUND((((POW((LEAST((((COALESCE(rt.memtotal, 0) + (COALESCE(rt.leadertotal, 0) - (pu.fixed_cost + (((COALESCE(rt.memtotal, 0)
+                + COALESCE(rt.leadertotal, 0)) - pu.fixed_cost) * pu.margin))))) / (NULLIF(asa.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
           END
       END
     END AS epoch_ros
@@ -195,10 +181,8 @@ BEGIN
   ) AS pu ON true
   LEFT JOIN blockcounts AS b ON asa.pool_id = b.pool_hash_id
     AND asa.epoch_no = b.epoch_no
-  LEFT JOIN leadertotals AS l ON asa.pool_id = l.pool_id
-    AND asa.epoch_no = l.earned_epoch
-  LEFT JOIN membertotals AS m ON asa.pool_id = m.pool_id
-    AND asa.epoch_no = m.earned_epoch;
+  LEFT JOIN reward_totals AS rt ON asa.pool_id = rt.pool_id
+    AND asa.epoch_no = rt.earned_epoch;
      
 END;
 $$;
@@ -270,7 +254,6 @@ BEGIN
     ON CONFLICT (key)
       DO UPDATE SET last_value = NOW() AT TIME ZONE 'utc';
 
-    -- Commit the transaction for this batch
     COMMIT;
     
     _insert_epoch := _batch_end_epoch;
