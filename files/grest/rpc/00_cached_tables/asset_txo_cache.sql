@@ -22,7 +22,7 @@ BEGIN
           mto.ident
         FROM grest.asset_cache_control AS acc
           LEFT JOIN multi_asset AS ma ON ma.policy = acc.policy
-          LEFT JOIN ma_tx_out AS mto ON mto.ident = ma.id
+          INNER JOIN ma_tx_out AS mto ON mto.ident = ma.id
         WHERE mto.tx_out_id > (SELECT COALESCE(MAX(atoc.txo_id),0) FROM grest.asset_tx_out_cache AS atoc)
       )
   INSERT INTO grest.asset_tx_out_cache

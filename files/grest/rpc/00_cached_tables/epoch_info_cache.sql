@@ -106,7 +106,7 @@ BEGIN
     GROUP BY b.epoch_no;
 
   INSERT INTO grest.epoch_info_cache
-    SELECT DISTINCT ON (b.time)
+    SELECT DISTINCT ON (e.start_time)
       e.no AS epoch_no,
       e.out_sum AS i_out_sum,
       e.fees AS i_fees,
@@ -134,13 +134,9 @@ BEGIN
     LEFT JOIN cost_model AS cm ON cm.id = ep.cost_model_id
     INNER JOIN block AS b ON b.time = e.start_time
     LEFT JOIN LATERAL (
-        SELECT
-          e.no,
-          SUM(r.amount) AS amount
+        SELECT SUM(r.amount) AS amount
         FROM reward AS r
         WHERE r.earned_epoch = e.no
-        GROUP BY
-          e.no
       ) AS reward_pot ON TRUE
     WHERE e.no >= _epoch_no_to_insert_from
     ORDER BY
