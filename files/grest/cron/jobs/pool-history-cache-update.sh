@@ -8,5 +8,8 @@ if [[ $(( $(date +%s) - tip )) -gt 300 ]]; then
 fi
 
 echo "$(date +%F_%H:%M:%S) Running pool history cache update..."
-psql ${DB_NAME} -qbt -c "SELECT GREST.pool_history_cache_update();" 1>/dev/null
+if ! psql ${DB_NAME} -v ON_ERROR_STOP=1 -qbt -c "CALL GREST.pool_history_cache_update();" 1>/dev/null; then
+  echo "$(date +%F_%H:%M:%S) Error: pool history cache update failed!" >&2
+  exit 1
+fi
 echo "$(date +%F_%H:%M:%S) Job done!"
