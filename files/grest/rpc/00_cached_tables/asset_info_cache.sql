@@ -18,7 +18,7 @@ RETURNS void
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  _lastest_tx_id bigint;
+  _latest_tx_id bigint;
   _asset_info_cache_last_tx_id bigint;
   _asset_id_list bigint[];
 BEGIN
@@ -33,7 +33,7 @@ BEGIN
     RAISE EXCEPTION 'Previous asset_info_cache_update query still running but should have completed! Exiting...';
   END IF;
 
-  SELECT MAX(id) INTO _lastest_tx_id
+  SELECT MAX(id) INTO _latest_tx_id
   FROM public.tx;
 
   -- assumption rollback to cater for - 15 blocks (16 tx each) , accordingly - rounding off to 250
@@ -45,7 +45,7 @@ BEGIN
     RAISE NOTICE 'Asset info cache table is empty, deleting all previous cache records and starting initial population...';
     TRUNCATE TABLE grest.asset_info_cache;
   ELSE
-    RAISE NOTICE 'Updating asset info based ON data FROM transaction id in range % - % ...', _asset_info_cache_last_tx_id, _lastest_tx_id;
+    RAISE NOTICE 'Updating asset info based ON data FROM transaction id in range % - % ...', _asset_info_cache_last_tx_id, _latest_tx_id;
     SELECT ARRAY_AGG(DISTINCT ident) INTO _asset_id_list
     FROM ma_tx_mint
     WHERE tx_id > _asset_info_cache_last_tx_id;
@@ -111,7 +111,7 @@ BEGIN
   -- GREST control table entry
   PERFORM grest.update_control_table(
     'asset_info_cache_last_tx_id',
-    _lastest_tx_id::text
+    _latest_tx_id::text
   );
 
 END;

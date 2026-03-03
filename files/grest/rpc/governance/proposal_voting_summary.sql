@@ -64,6 +64,7 @@ BEGIN
         SELECT
           gap.id AS gov_action_proposal_id,
           gap.type AS proposal_type,
+          gap.description,
           expired_epoch,
           ratified_epoch,
           dropped_epoch,
@@ -243,6 +244,7 @@ BEGIN
         SELECT 
           ped.gov_action_proposal_id,
           ped.proposal_type,
+          ped.description,
           ped.epoch_of_interest,
           tot_drep_power,
           inactive_drep_power,
@@ -289,33 +291,39 @@ BEGIN
       y.drep_no_confidence_vote_power::text AS drep_always_no_confidence_vote_power,
       y.drep_always_abstain_vote_power::text AS drep_always_abstain_vote_power,
       (CASE
-        WHEN y.proposal_type IN ('ParameterChange', 'TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type IN ('TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type in ('ParameterChange') AND NOT grest.has_security_param(y.description) THEN 0
         ELSE y.pool_yes_votes_cast
       END)::integer AS pool_yes_votes_cast,
       y.pool_yes_vote_power::text AS pool_active_yes_vote_power,
       (CASE
-        WHEN y.proposal_type IN ('ParameterChange', 'TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type IN ('TreasuryWithdrawals', 'NewConstitution') THEN 0
         WHEN y.proposal_type IN ('NoConfidence') THEN y.pool_yes_vote_power + y.pool_passive_always_no_confidence_vote_power
+        WHEN y.proposal_type in ('ParameterChange') AND NOT grest.has_security_param(y.description) THEN 0
         ELSE y.pool_yes_vote_power
       END)::text AS pool_yes_vote_power,
       (CASE
-        WHEN y.proposal_type IN ('ParameterChange', 'TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type IN ('TreasuryWithdrawals', 'NewConstitution') THEN 0
         WHEN y.proposal_type IN ('NoConfidence') THEN ROUND((y.pool_yes_vote_power + y.pool_passive_always_no_confidence_vote_power) * 100 / y.pool_non_abstain_total, 2)
+        WHEN y.proposal_type in ('ParameterChange') AND NOT grest.has_security_param(y.description) THEN 0
         ELSE ROUND(y.pool_yes_vote_power * 100 / y.pool_non_abstain_total, 2)
       END) AS pool_yes_pct,
       (CASE
-        WHEN y.proposal_type IN ('ParameterChange', 'TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type IN ('TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type in ('ParameterChange') AND NOT grest.has_security_param(y.description) THEN 0
         ELSE y.pool_no_votes_cast
       END)::integer AS pool_no_votes_cast,
       y.pool_no_vote_power::text AS pool_active_no_vote_power,
       (CASE
-        WHEN y.proposal_type IN ('ParameterChange', 'TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type IN ('TreasuryWithdrawals', 'NewConstitution') THEN 0
         WHEN y.proposal_type IN ('NoConfidence') THEN (y.pool_non_abstain_total - y.pool_yes_vote_power - y.pool_passive_always_no_confidence_vote_power)
+        WHEN y.proposal_type in ('ParameterChange') AND NOT grest.has_security_param(y.description) THEN 0
         ELSE (y.pool_non_abstain_total - y.pool_yes_vote_power)
       END)::text AS pool_no_vote_power,
       (CASE
-        WHEN y.proposal_type IN ('ParameterChange', 'TreasuryWithdrawals', 'NewConstitution') THEN 0
+        WHEN y.proposal_type IN ('TreasuryWithdrawals', 'NewConstitution') THEN 0
         WHEN y.proposal_type IN ('NoConfidence') THEN  ROUND((y.pool_non_abstain_total - y.pool_yes_vote_power - y.pool_passive_always_no_confidence_vote_power) * 100 / y.pool_non_abstain_total, 2)
+        WHEN y.proposal_type in ('ParameterChange') AND NOT grest.has_security_param(y.description) THEN 0
         ELSE ROUND((y.pool_non_abstain_total - y.pool_yes_vote_power) * 100 / y.pool_non_abstain_total, 2)
       END) AS pool_no_pct,
       (SELECT COALESCE(SUM(pool_votes_cast), 0)::integer FROM active_prop_pool_votes WHERE vote = 'Abstain') AS pool_abstain_votes_cast,

@@ -44,6 +44,10 @@ BEGIN
     FROM UNNEST(_pool_bech32) AS pool)
   );
 
+  IF _pool_bech32 IS NOT NULL AND _pool_ids IS NULL THEN
+    RAISE EXCEPTION 'No valid pool Bech32 strings provided.';
+  END IF;
+
   RETURN QUERY
   
   WITH
@@ -52,118 +56,79 @@ BEGIN
         sl.pool_hash_id,
         b.epoch_no,
         COUNT(*) AS block_cnt
-      FROM block AS b,
-        slot_leader AS sl
-      WHERE b.slot_leader_id = sl.id
-        AND (_pool_bech32 is null or sl.pool_hash_id = ANY(_pool_ids))
+      FROM block AS b
+      INNER JOIN slot_leader AS sl ON b.slot_leader_id = sl.id
+      WHERE (_pool_bech32 IS NULL OR sl.pool_hash_id = ANY(_pool_ids))
         AND b.epoch_no >= _epoch_no_to_insert_from
-        AND (_epoch_no_until is null or b.epoch_no <= _epoch_no_until) 
+        AND (_epoch_no_until IS NULL OR b.epoch_no < _epoch_no_until)
       GROUP BY
         sl.pool_hash_id,
         b.epoch_no
     ),
-    leadertotals AS (
+    reward_totals AS (
       SELECT
         r.pool_id,
         r.earned_epoch,
-        COALESCE(SUM(r.amount), 0) AS leadertotal
+        COALESCE(SUM(CASE WHEN r.type = 'leader' THEN r.amount ELSE 0 END), 0) AS leadertotal,
+        COALESCE(SUM(CASE WHEN r.type = 'member' THEN r.amount ELSE 0 END), 0) AS memtotal
       FROM reward AS r
-      WHERE r.type = 'leader'
-        AND (_pool_bech32 is null or r.pool_id = ANY(_pool_ids))
+      WHERE r.type IN ('leader', 'member')
+        AND (_pool_bech32 IS NULL OR r.pool_id = ANY(_pool_ids))
         AND r.earned_epoch >= _epoch_no_to_insert_from
-        AND (_epoch_no_until is null or r.earned_epoch <= _epoch_no_until)
+        AND (_epoch_no_until IS NULL OR r.earned_epoch < _epoch_no_until)
       GROUP BY
         r.pool_id,
         r.earned_epoch
     ),
 
-    membertotals AS (
+    epoch_info AS (
       SELECT
-        r.pool_id,
-        r.earned_epoch,
-        COALESCE(SUM(r.amount), 0) AS memtotal
-      FROM reward AS r
-      WHERE r.type = 'member'
-        AND (_pool_bech32 is null or r.pool_id = ANY(_pool_ids))
-        AND r.earned_epoch >= _epoch_no_to_insert_from
-        AND (_epoch_no_until is null or r.earned_epoch <= _epoch_no_until)
-      GROUP BY
-        r.pool_id,
-        r.earned_epoch
+        e.no AS epoch_no,
+        ep.optimal_pool_count,
+        tot.supply::bigint AS supply,
+        easc.amount AS active_stake_total
+      FROM epoch AS e
+      LEFT JOIN epoch_param AS ep ON ep.epoch_no = e.no
+      LEFT JOIN LATERAL grest.totals(e.no) AS tot ON true
+      LEFT JOIN grest.epoch_active_stake_cache AS easc ON easc.epoch_no = e.no
+      WHERE e.no >= _epoch_no_to_insert_from
+        AND (_epoch_no_until IS NULL OR e.no < _epoch_no_until)
     ),
 
-    activeandfees AS (
+    active_stake_agg AS (
       SELECT
-        es.pool_id AS pool_id,
+        es.pool_id,
         es.epoch_no,
         SUM(es.amount) AS active_stake,
-        COUNT(1) AS delegator_cnt,
-        (
-          SELECT margin
-          FROM pool_update
-          WHERE id = (
-              SELECT MAX(pup2.id)
-              FROM pool_update AS pup2
-              WHERE pup2.hash_id = es.pool_id
-                AND pup2.active_epoch_no <= es.epoch_no
-           )
-        ) AS pool_fee_variable,
-        (
-          SELECT fixed_cost
-          FROM pool_update
-          WHERE id = (
-              SELECT MAX(pup2.id)
-              FROM pool_update AS pup2
-              WHERE pup2.hash_id = es.pool_id
-                AND pup2.active_epoch_no <= es.epoch_no)
-        ) AS pool_fee_fixed,
-        (SUM(es.amount) / (
-          SELECT NULLIF(easc.amount, 0)
-          FROM grest.epoch_active_stake_cache AS easc
-          WHERE easc.epoch_no = es.epoch_no
-          )
-        ) * 100 AS active_stake_pct,
-        ROUND(
-          (SUM(es.amount) / (
-            SELECT supply::bigint / (
-                SELECT ep.optimal_pool_count
-                FROM epoch_param AS ep
-                WHERE ep.epoch_no = es.epoch_no
-              )
-            FROM grest.totals (es.epoch_no)
-            ) * 100
-          ), 2
-        ) AS saturation_pct
+        COUNT(1) AS delegator_cnt
       FROM epoch_stake AS es
       WHERE es.epoch_no >= _epoch_no_to_insert_from
-        AND (_epoch_no_until is null or es.epoch_no < _epoch_no_until)
-        AND (_pool_bech32 is null or es.pool_id = ANY(_pool_ids))
+        AND (_epoch_no_until IS NULL OR es.epoch_no < _epoch_no_until)
+        AND (_pool_bech32 IS NULL OR es.pool_id = ANY(_pool_ids))
       GROUP BY es.pool_id, es.epoch_no
     )
 
   SELECT
-    actf.pool_id::bigint,
-    actf.epoch_no::bigint,
-    actf.active_stake::lovelace,
-    actf.active_stake_pct,
-    actf.saturation_pct,
+    asa.pool_id::bigint,
+    asa.epoch_no::bigint,
+    asa.active_stake::lovelace,
+    (asa.active_stake / NULLIF(ei.active_stake_total, 0)) * 100 AS active_stake_pct,
+    ROUND((asa.active_stake / NULLIF(ei.supply / NULLIF(ei.optimal_pool_count, 0), 0) * 100), 2) AS saturation_pct,
     COALESCE(b.block_cnt, 0) AS block_cnt,
-    actf.delegator_cnt,
-    actf.pool_fee_variable::double precision,
-    actf.pool_fee_fixed,
-    -- for debugging: m.memtotal,
-    -- for debugging: l.leadertotal,
+    asa.delegator_cnt,
+    pu.margin::double precision AS pool_fee_variable,
+    pu.fixed_cost,
     CASE COALESCE(b.block_cnt, 0)
     WHEN 0 THEN
       0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
         ELSE
           CASE
-            WHEN COALESCE(l.leadertotal, 0) < actf.pool_fee_fixed THEN COALESCE(l.leadertotal, 0)
-            ELSE ROUND(actf.pool_fee_fixed + (((COALESCE(m.memtotal, 0) + COALESCE(l.leadertotal, 0)) - actf.pool_fee_fixed) * actf.pool_fee_variable))
+            WHEN COALESCE(rt.leadertotal, 0) < pu.fixed_cost THEN COALESCE(rt.leadertotal, 0)
+            ELSE ROUND(pu.fixed_cost + (((COALESCE(rt.memtotal, 0) + COALESCE(rt.leadertotal, 0)) - pu.fixed_cost) * pu.margin))
           END
       END
     END AS pool_fees,
@@ -172,66 +137,71 @@ BEGIN
       0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
       ELSE
         CASE
-          WHEN COALESCE(l.leadertotal, 0) < actf.pool_fee_fixed THEN COALESCE(m.memtotal, 0)
-          ELSE ROUND(COALESCE(m.memtotal, 0) + (COALESCE(l.leadertotal, 0) - (actf.pool_fee_fixed + (((COALESCE(m.memtotal, 0) + COALESCE(l.leadertotal, 0)) - actf.pool_fee_fixed) * actf.pool_fee_variable))))
+          WHEN COALESCE(rt.leadertotal, 0) < pu.fixed_cost THEN COALESCE(rt.memtotal, 0)
+          ELSE ROUND(COALESCE(rt.memtotal, 0) + (COALESCE(rt.leadertotal, 0) - (pu.fixed_cost + (((COALESCE(rt.memtotal, 0) + COALESCE(rt.leadertotal, 0)) - pu.fixed_cost) * pu.margin))))
         END
       END
     END AS deleg_rewards,
     CASE COALESCE(b.block_cnt, 0)
       WHEN 0 THEN 0
     ELSE
-      CASE COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
-        ELSE COALESCE(m.memtotal, 0)
+        ELSE COALESCE(rt.memtotal, 0)
       END
     END::double precision AS member_rewards,
     CASE COALESCE(b.block_cnt, 0)
       WHEN 0 THEN 0
     ELSE
       -- special CASE for WHEN reward information is not available yet
-      CASE COALESCE(l.leadertotal, 0) + COALESCE(m.memtotal, 0)
+      CASE COALESCE(rt.leadertotal, 0) + COALESCE(rt.memtotal, 0)
         WHEN 0 THEN NULL
         ELSE
           CASE
-            WHEN COALESCE(l.leadertotal, 0) < actf.pool_fee_fixed THEN ROUND((((POW((LEAST(((COALESCE(m.memtotal, 0)) / (NULLIF(actf.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
+            WHEN COALESCE(rt.leadertotal, 0) < pu.fixed_cost THEN ROUND((((POW((LEAST(((COALESCE(rt.memtotal, 0)) / (NULLIF(asa.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
             -- using LEAST AS a way to prevent overflow, in CASE of dodgy database data (e.g. giant rewards / tiny active stake)
-            ELSE ROUND((((POW((LEAST((((COALESCE(m.memtotal, 0) + (COALESCE(l.leadertotal, 0) - (actf.pool_fee_fixed + (((COALESCE(m.memtotal, 0)
-                + COALESCE(l.leadertotal, 0)) - actf.pool_fee_fixed) * actf.pool_fee_variable))))) / (NULLIF(actf.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
+            ELSE ROUND((((POW((LEAST((((COALESCE(rt.memtotal, 0) + (COALESCE(rt.leadertotal, 0) - (pu.fixed_cost + (((COALESCE(rt.memtotal, 0)
+                + COALESCE(rt.leadertotal, 0)) - pu.fixed_cost) * pu.margin))))) / (NULLIF(asa.active_stake, 0))), 1000) + 1), 73) - 1)) * 100)::numeric, 9)
           END
       END
     END AS epoch_ros
-  FROM activeandfees AS actf
-  LEFT JOIN blockcounts AS b ON actf.pool_id = b.pool_hash_id
-    AND actf.epoch_no = b.epoch_no
-  LEFT JOIN leadertotals AS l ON actf.pool_id = l.pool_id
-    AND actf.epoch_no = l.earned_epoch
-  LEFT JOIN membertotals AS m ON actf.pool_id = m.pool_id
-    AND actf.epoch_no = m.earned_epoch;
+  FROM active_stake_agg AS asa
+  LEFT JOIN epoch_info AS ei ON asa.epoch_no = ei.epoch_no
+  LEFT JOIN LATERAL (
+    SELECT margin, fixed_cost
+    FROM pool_update
+    WHERE hash_id = asa.pool_id
+      AND active_epoch_no <= asa.epoch_no
+    ORDER BY active_epoch_no DESC, id DESC
+    LIMIT 1
+  ) AS pu ON true
+  LEFT JOIN blockcounts AS b ON asa.pool_id = b.pool_hash_id
+    AND asa.epoch_no = b.epoch_no
+  LEFT JOIN reward_totals AS rt ON asa.pool_id = rt.pool_id
+    AND asa.epoch_no = rt.earned_epoch;
      
 END;
 $$;
 
 COMMENT ON FUNCTION grest.get_pool_history_data_bulk IS 'Pool block production and reward history from a given epoch until optional later epoch, for all or particular subset of pools'; -- noqa: LT01
 
-CREATE OR REPLACE FUNCTION grest.pool_history_cache_update(_epoch_no_to_insert_from bigint DEFAULT null)
-RETURNS void
+DROP FUNCTION IF EXISTS grest.pool_history_cache_update;
+
+CREATE OR REPLACE PROCEDURE grest.pool_history_cache_update(_epoch_no_to_insert_from bigint DEFAULT null)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   _curr_epoch bigint;
   _latest_epoch_no_in_cache bigint;
+  _insert_epoch bigint;
+  _batch_end_epoch bigint;
 BEGIN
-  IF (
-    SELECT COUNT(pid) > 1
-    FROM pg_stat_activity
-    WHERE state = 'active' AND query ILIKE '%grest.pool_history_cache_update%'
-      AND datname = (SELECT current_database())
-    ) THEN
-      RAISE EXCEPTION 'Previous pool_history_cache_update query still running but should have completed! Exiting...';
+  IF NOT pg_try_advisory_lock(hashtext('pool_history_cache_update'::text)) THEN
+    RAISE EXCEPTION 'Previous pool_history_cache_update query still running but should have completed! Exiting...';
   END IF;
 
   IF (
@@ -239,47 +209,58 @@ BEGIN
     FROM GREST.CONTROL_TABLE
     WHERE key = 'last_active_stake_validated_epoch'
   ) THEN
+    PERFORM pg_advisory_unlock(hashtext('pool_history_cache_update'::text));
     RAISE EXCEPTION 'Active stake cache not yet populated! Exiting...';
   END IF;
 
   SELECT COALESCE(MAX(epoch_no), 0) INTO _latest_epoch_no_in_cache FROM grest.pool_history_cache;
-  -- Split into 500 epochs at a time to avoid hours spent on a single query (which can be risky if that query is killed)
-  SELECT LEAST( 500 , (MAX(no) - _latest_epoch_no_in_cache) ) + _latest_epoch_no_in_cache INTO _curr_epoch FROM epoch;
+  SELECT MAX(no) INTO _curr_epoch FROM epoch;
 
   IF _epoch_no_to_insert_from IS NULL THEN
     IF _latest_epoch_no_in_cache = 0 THEN
       RAISE NOTICE 'Pool history cache table is empty, starting initial population...';
-      PERFORM grest.pool_history_cache_update (0);
-      RETURN;
+      _epoch_no_to_insert_from := 0;
+    ELSE
+      -- no-op IF we already have data up until second most recent epoch
+      IF _latest_epoch_no_in_cache >= _curr_epoch - 1 THEN
+        INSERT INTO grest.control_table (key, last_value)
+          VALUES ('pool_history_cache_last_updated', NOW() AT TIME ZONE 'utc')
+        ON CONFLICT (key)
+          DO UPDATE SET last_value = NOW() AT TIME ZONE 'utc';
+          
+        PERFORM pg_advisory_unlock(hashtext('pool_history_cache_update'::text));
+        RETURN;
+      END IF;
+      
+      -- IF current epoch is at least 2 ahead of latest in cache, repopulate FROM latest in cache
+      _epoch_no_to_insert_from := _latest_epoch_no_in_cache;
     END IF;
-    -- no-op IF we already have data up until second most recent epoch
-    IF _latest_epoch_no_in_cache >= (_curr_epoch - 2) THEN
-      INSERT INTO grest.control_table (key, last_value)
-        VALUES ('pool_history_cache_last_updated', NOW() AT TIME ZONE 'utc')
-      ON CONFLICT (key)
-        DO UPDATE SET last_value = NOW() AT TIME ZONE 'utc';
-      RETURN;
-    END IF;
-    -- IF current epoch is at least 2 ahead of latest in cache, repopulate FROM latest in cache until current-1
-    _epoch_no_to_insert_from := _latest_epoch_no_in_cache;
   END IF;
-  -- purge the data for the given epoch range, in theory should do nothing IF invoked only at start of new epoch
-  DELETE FROM grest.pool_history_cache
-  WHERE epoch_no >= _epoch_no_to_insert_from;
 
-  RAISE NOTICE 'inserting data from % to %', _epoch_no_to_insert_from, _curr_epoch;
+  -- Process in batches of 50 epochs (smaller batch) to avoid huge transactions
+  _insert_epoch := _epoch_no_to_insert_from;
+  
+  WHILE _insert_epoch <= _curr_epoch LOOP
+    _batch_end_epoch := LEAST(_insert_epoch + 50, _curr_epoch + 1);
+    
+    RAISE NOTICE 'inserting data from % to %', _insert_epoch, _batch_end_epoch;
 
+    INSERT INTO grest.pool_history_cache (
+      SELECT * FROM grest.get_pool_history_data_bulk(_insert_epoch::word31type, null::text [], _batch_end_epoch::word31type)
+    );
 
-  INSERT INTO grest.pool_history_cache (
-    select * from grest.get_pool_history_data_bulk(_epoch_no_to_insert_from::word31type, null::text [], _curr_epoch::word31type)
-  );
+    INSERT INTO grest.control_table (key, last_value)
+      VALUES ('pool_history_cache_last_updated', NOW() AT TIME ZONE 'utc')
+    ON CONFLICT (key)
+      DO UPDATE SET last_value = NOW() AT TIME ZONE 'utc';
 
-  INSERT INTO grest.control_table (key, last_value)
-    VALUES ('pool_history_cache_last_updated', NOW() AT TIME ZONE 'utc')
-  ON CONFLICT (key)
-    DO UPDATE SET last_value = NOW() AT TIME ZONE 'utc';
+    COMMIT;
+    
+    _insert_epoch := _batch_end_epoch;
+  END LOOP;
 
+  PERFORM pg_advisory_unlock(hashtext('pool_history_cache_update'::text));
 END;
 $$;
 
-COMMENT ON FUNCTION grest.pool_history_cache_update IS 'Internal function to update pool history for data FROM specified epoch until current-epoch-minus-one. Invoke WITH non-empty param for initial population, WITH empty for subsequent updates'; --noqa: LT01
+COMMENT ON PROCEDURE grest.pool_history_cache_update IS 'Internal procedure to update pool history for data FROM specified epoch until current-epoch-minus-one. Invoke WITH non-empty param for initial population, WITH empty for subsequent updates'; --noqa: LT01

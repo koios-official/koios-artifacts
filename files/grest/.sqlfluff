@@ -11,7 +11,7 @@ large_file_skip_byte_limit=50000
 
 [sqlfluff:indentation]
 tab_space_size = 2
-allow_implicit_indents = True
+implicit_indents = allow
 
 [sqlfluff:rules:convention.count_rows]
 prefer_count_1 = True
