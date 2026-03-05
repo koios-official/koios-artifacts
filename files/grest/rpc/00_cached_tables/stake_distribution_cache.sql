@@ -28,6 +28,31 @@ BEGIN
   SELECT MAX(no) INTO _latest_epoch FROM public.epoch WHERE no IS NOT NULL;
 
   WITH
+    -- Precompute all dangling delegation IDs in one set-based pass
+    -- instead of calling grest.is_dangling_delegation() per row
+    dangling_delegations AS (
+      SELECT DISTINCT d.id AS delegation_id
+      FROM delegation AS d
+      INNER JOIN pool_retire AS pr ON pr.hash_id = d.pool_hash_id
+        AND pr.retiring_epoch <= _latest_epoch
+        AND pr.retiring_epoch > (
+          SELECT b.epoch_no
+          FROM block AS b
+          INNER JOIN tx AS t ON t.id = d.tx_id AND t.block_id = b.id
+        )
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM pool_update AS pu
+        WHERE pu.hash_id = d.pool_hash_id
+          AND pu.registered_tx_id >= pr.announced_tx_id
+          AND pu.registered_tx_id <= (
+            SELECT i_last_tx_id
+            FROM grest.epoch_info_cache AS eic
+            WHERE eic.epoch_no = pr.retiring_epoch - 1
+          )
+      )
+    ),
+
     accounts_with_delegated_pools AS (
       SELECT DISTINCT ON (stake_address.id)
         stake_address.id AS stake_address_id,
@@ -47,7 +72,10 @@ BEGIN
               AND stake_deregistration.tx_id > delegation.tx_id
           )
           -- skip delegations that were followed by at least one stake pool retirement
-          AND NOT grest.is_dangling_delegation(delegation.id)
+          AND NOT EXISTS (
+            SELECT TRUE FROM dangling_delegations AS dd
+            WHERE dd.delegation_id = delegation.id
+          )
           -- Account must be present in epoch_stake table for the last validated epoch
           AND EXISTS (
             SELECT TRUE
@@ -226,18 +254,37 @@ BEGIN
   -- Clean up accounts registered to retired-at-least-once-since pools
   RAISE NOTICE 'DANGLING delegation cleanup from SDC commencing';
   DELETE FROM grest.stake_distribution_cache
-    WHERE stake_address_id in (
-     SELECT z.stake_address_id
-     FROM (
-      SELECT 
-        (
-          SELECT max(d.id)
-          FROM delegation d
-            INNER JOIN stake_address sd ON sd.id = sdc.stake_address_id AND sd.id = d.addr_id) AS last_deleg,
-        sdc.stake_address_id
-      FROM grest.stake_distribution_cache AS sdc
-    ) AS z
-    WHERE grest.is_dangling_delegation(z.last_deleg)
+  WHERE stake_address_id IN (
+    WITH last_delegations AS (
+      SELECT DISTINCT ON (d.addr_id)
+        d.addr_id AS stake_address_id,
+        d.id AS delegation_id,
+        d.pool_hash_id,
+        d.tx_id
+      FROM delegation AS d
+      INNER JOIN grest.stake_distribution_cache AS sdc ON sdc.stake_address_id = d.addr_id
+      ORDER BY d.addr_id, d.id DESC
+    )
+    SELECT ld.stake_address_id
+    FROM last_delegations AS ld
+    INNER JOIN pool_retire AS pr ON pr.hash_id = ld.pool_hash_id
+      AND pr.retiring_epoch <= _latest_epoch
+      AND pr.retiring_epoch > (
+        SELECT b.epoch_no
+        FROM block AS b
+        INNER JOIN tx AS t ON t.id = ld.tx_id AND t.block_id = b.id
+      )
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM pool_update AS pu
+      WHERE pu.hash_id = ld.pool_hash_id
+        AND pu.registered_tx_id >= pr.announced_tx_id
+        AND pu.registered_tx_id <= (
+          SELECT i_last_tx_id
+          FROM grest.epoch_info_cache AS eic
+          WHERE eic.epoch_no = pr.retiring_epoch - 1
+        )
+    )
   );
 
   GET DIAGNOSTICS _row_count = ROW_COUNT;
