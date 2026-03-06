@@ -106,23 +106,14 @@ BEGIN
       WHERE epoch_no = (_active_stake_epoch + 2)
     ),
 
-    account_delta_tx_ins AS (
+    account_delta_input AS (
       SELECT
         awdp.stake_address_id,
-        tx_out.id AS txoid
+        COALESCE(SUM(tx_out.value), 0) AS amount
       FROM tx_out
       INNER JOIN accounts_with_delegated_pools AS awdp ON awdp.stake_address_id = tx_out.stake_address_id
       WHERE tx_out.consumed_by_tx_id > _last_account_tx_id
-    ),
-
-    account_delta_input AS (
-      SELECT
-        tx_out.stake_address_id,
-        COALESCE(SUM(tx_out.value), 0) AS amount
-      FROM account_delta_tx_ins
-      LEFT JOIN tx_out ON account_delta_tx_ins.txoid=tx_out.id
-      INNER JOIN accounts_with_delegated_pools AS awdp ON awdp.stake_address_id = tx_out.stake_address_id
-      GROUP BY tx_out.stake_address_id
+      GROUP BY awdp.stake_address_id
     ),
 
     account_delta_output AS (
