@@ -320,17 +320,6 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'Previous query still running but should have completed! Exiting...';
   ELSIF (
-    -- If checking query with a different name there will be 1 result
-    SELECT COUNT(pid) > 0
-    FROM pg_stat_activity
-    WHERE state = 'active'
-      AND query ILIKE '%grest.update_newly_registered_accounts_stake_distribution_cache(%'
-      AND datname = (
-        SELECT current_database()
-      )
-  ) THEN
-    RAISE EXCEPTION 'New accounts query running! Exiting...';
-  ELSIF (
     SELECT count(last_value) = 0
     FROM grest.control_table
     WHERE key = 'last_active_stake_validated_epoch'
