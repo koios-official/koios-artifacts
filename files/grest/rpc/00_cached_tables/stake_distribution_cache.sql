@@ -18,6 +18,9 @@ DECLARE -- Last block height to control future re-runs of the query
   _latest_epoch bigint;
   _row_count bigint;
 BEGIN
+  --temporarly increase work_mem for this big query
+  PERFORM set_config('work_mem', '4GB', true);
+
   SELECT MAX(block_no) FROM public.block
     WHERE block_no IS NOT NULL INTO _last_accounted_block_height;
   SELECT (last_value::integer - 2)::integer INTO _active_stake_epoch FROM grest.control_table
