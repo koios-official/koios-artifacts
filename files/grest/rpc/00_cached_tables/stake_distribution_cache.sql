@@ -19,7 +19,7 @@ DECLARE -- Last block height to control future re-runs of the query
   _row_count bigint;
 BEGIN
   --temporarly increase work_mem for this big query
-  PERFORM set_config('work_mem', '4GB', true);
+  PERFORM set_config('work_mem', '512MB', true);
 
   SELECT MAX(block_no) FROM public.block
     WHERE block_no IS NOT NULL INTO _last_accounted_block_height;
@@ -31,8 +31,6 @@ BEGIN
   SELECT MAX(no) INTO _latest_epoch FROM public.epoch WHERE no IS NOT NULL;
 
   WITH
-    -- Precompute all dangling delegation IDs in one set-based pass
-    -- instead of calling grest.is_dangling_delegation() per row
     dangling_delegations AS (
       SELECT DISTINCT d.id AS delegation_id
       FROM delegation AS d
