@@ -2994,7 +2994,7 @@ schemas:
           anyOf:
             - type: boolean
             - type: "null"
-          description: Indicate whether data is invalid (currently returns null for all as per dbsync)
+          description: Indicate whether data is invalid
           example: null
   drep_updates:
     description: List of updates for requested (or all) delegated representatives (DReps)

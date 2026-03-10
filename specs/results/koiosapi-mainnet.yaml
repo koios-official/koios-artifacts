@@ -3166,8 +3166,8 @@ components:
                   type: string
             example:
               _drep_ids:
-                -  drep17l6sywnwqu9aedd6aumev42w39ln5zfl9nw7j4ak6u8swyrwvz3
-                -  drep1s9q5uyddsvza4uk2n9wswy90n8wx9d2jmrq4zgcvlyv055007av
+                -  drep1ytf9f78k7rkwk4cu6l2nvna22keu9yus4kqzc0hqspd36uszu0xc2
+                -  drep1yglrf4el8gghum239fggvfrau25k2576y4dvcz65r2ukj8sqpsc2k
     utxo_refs_with_extended:
       content:
         application/json:
@@ -6312,7 +6312,7 @@ components:
             anyOf:
               - type: boolean
               - type: "null"
-            description: Indicate whether data is invalid (currently returns null for all as per dbsync)
+            description: Indicate whether data is invalid
             example: null
     drep_updates:
       description: List of updates for requested (or all) delegated representatives (DReps)
