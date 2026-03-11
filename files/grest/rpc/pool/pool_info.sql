@@ -128,10 +128,10 @@ BEGIN
       LIMIT 1
     ) AS block_data ON TRUE
     LEFT JOIN LATERAL(
-      SELECT amount::lovelace AS as_sum
-      FROM grest.pool_active_stake_cache AS pasc
-      WHERE pasc.pool_id = api.pool_hash_id
-        AND pasc.epoch_no = _epoch_no
+      SELECT stake::lovelace AS as_sum
+      FROM pool_stat AS pstat
+      WHERE pstat.pool_hash_id = api.pool_hash_id
+        AND pstat.epoch_no = (_epoch_no - 1)
     ) AS active_stake ON TRUE
     LEFT JOIN LATERAL(
       SELECT amount::lovelace AS es_sum

@@ -1,9 +1,4 @@
-CREATE TABLE IF NOT EXISTS grest.pool_active_stake_cache (
-  pool_id bigint NOT NULL,
-  epoch_no bigint NOT NULL,
-  amount lovelace NOT NULL,
-  PRIMARY KEY (pool_id, epoch_no)
-);
+DELETE TABLE IF EXISTS grest.pool_active_stake_cache;
 
 CREATE TABLE IF NOT EXISTS grest.epoch_active_stake_cache (
   epoch_no bigint NOT NULL,
@@ -63,28 +58,6 @@ BEGIN
       (SELECT last_value::integer
         FROM grest.control_table
         WHERE key = 'last_active_stake_validated_epoch'), _epoch_no - 3) INTO _last_active_stake_validated_epoch;
-    -- POOL ACTIVE STAKE CACHE
-    INSERT INTO grest.pool_active_stake_cache
-      SELECT
-        epoch_stake.pool_id AS pool_id,
-        epoch_stake.epoch_no,
-        SUM(epoch_stake.amount) AS amount
-      FROM public.epoch_stake
-      WHERE epoch_stake.epoch_no >= _last_active_stake_validated_epoch
-        AND epoch_stake.epoch_no <= _epoch_no
-      GROUP BY
-        epoch_stake.pool_id,
-        epoch_stake.epoch_no
-    ON CONFLICT (
-      pool_id,
-      epoch_no
-    ) DO UPDATE
-      SET amount = excluded.amount
-      WHERE pool_active_stake_cache.amount IS DISTINCT FROM excluded.amount;
-    
-    -- Active stake older than active stake can already be captured from pool history cache
-    DELETE FROM grest.pool_active_stake_cache
-      WHERE epoch_no < _last_active_stake_validated_epoch;
 
     -- EPOCH ACTIVE STAKE CACHE
     INSERT INTO grest.epoch_active_stake_cache
@@ -107,4 +80,4 @@ BEGIN
   END;
 $$;
 
-COMMENT ON FUNCTION grest.active_stake_cache_update IS 'Internal function to update active stake cache (epoch, pool, and account tables).'; -- noqa: LT01
+COMMENT ON FUNCTION grest.active_stake_cache_update IS 'Internal function to update active stake cache (epoch).'; -- noqa: LT01
