@@ -624,7 +624,7 @@ paths:
       tags:
         - Transactions
       parameters:
-        - $ref: "#/components/parameters/_metalabel"
+        - $ref: "#/components/parameters/_label"
         - $ref: "#/components/parameters/_after_block_height"
       responses:
         "200":

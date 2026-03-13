@@ -34,7 +34,7 @@ BEGIN
     grest.epoch_active_stake_cache AS easc
     INNER JOIN pool_stat AS pstat on (easc.epoch_no - 1) = pstat.epoch_no
     LEFT JOIN grest.epoch_info_cache AS eic ON eic.epoch_no = easc.epoch_no
-  WHERE pstat.pool_id = (SELECT id FROM pool_hash AS ph WHERE ph.hash_raw = cardano.bech32_decode_data(_pool_bech32))
+  WHERE pstat.pool_hash_id = (SELECT id FROM pool_hash AS ph WHERE ph.hash_raw = cardano.bech32_decode_data(_pool_bech32))
     AND easc.epoch_no BETWEEN _go AND _mark
   ORDER BY
     easc.epoch_no;

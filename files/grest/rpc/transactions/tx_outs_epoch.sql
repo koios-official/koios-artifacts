@@ -8,7 +8,7 @@ RETURNS TABLE (
   epoch_no word31type,
   block_height word31type,
   block_time integer,
-  value lovelace,
+  value text,
   datum_hash text,
   is_spent boolean
 )
@@ -23,7 +23,7 @@ AS $$
     b.epoch_no,
     b.block_no AS block_height,
     EXTRACT(EPOCH FROM b.time)::integer AS block_time,
-    txo.value,
+    txo.value::text,
     ENCODE(txo.data_hash, 'hex') AS datum_hash,
     txo.consumed_by_tx_id IS NOT NULL AS is_spent
   FROM public.tx_out AS txo

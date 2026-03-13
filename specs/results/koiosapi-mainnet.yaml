@@ -624,7 +624,7 @@ paths:
       tags:
         - Transactions
       parameters:
-        - $ref: "#/components/parameters/_metalabel"
+        - $ref: "#/components/parameters/_label"
         - $ref: "#/components/parameters/_after_block_height"
       responses:
         "200":
@@ -3166,8 +3166,8 @@ components:
                   type: string
             example:
               _drep_ids:
-                -  drep1ytf9f78k7rkwk4cu6l2nvna22keu9yus4kqzc0hqspd36uszu0xc2
                 -  drep1yglrf4el8gghum239fggvfrau25k2576y4dvcz65r2ukj8sqpsc2k
+                -  drep1ytf9f78k7rkwk4cu6l2nvna22keu9yus4kqzc0hqspd36uszu0xc2
     utxo_refs_with_extended:
       content:
         application/json:

@@ -9,25 +9,23 @@ python3 -m pip install schemathesis pytest-order >/dev/null
 export SCHEMATHESIS_HOOKS=not_empty_response
 
 cat <<-EOF
-	
+
 	To run the endpoint validation tests, use the below:
-	
+
 	  export TOKEN="ey...."
-	  schemathesis run --request-timeout 25000 --hypothesis-deadline 25000 ../specs/results/koiosapi-guild.yaml --hypothesis-phases=explicit --hypothesis-verbosity quiet \\
-	      -b http://127.0.0.1:8053/api/v1 -c all --validate-schema=true -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" --experimental=openapi-3.1 --exclude-checks ignored_auth
-	
-	      where http://127.0.0.1:8053/api/v1 is the URL of instance you want to test, and guild.koios.rest is the target enviornment for testing.
-	
+	  schemathesis run --request-timeout 60 --max-response-time 60 ../specs/results/koiosapi-preview.yaml --phases=examples -u http://127.0.0.1:8053/api/v1 \\
+			-c all -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" --exclude-checks ignored_auth
+
 	To run the data validations tests, use the below (WIP - skip for now):
-	
+
 	  pytest --local-url http://127.0.0.1:8053/api/v1 --compare-url https://guild.koios.rest/api/v1 --api-schema-file ../specs/results/koiosapi-guild.yaml -x -v
-	
+
 	  Arguments:
 	      local-run		:	URL of instance you want to test"
 	      compare-url	:	Source-of-truth instance to compare returned data against"
 	      api-schema-file	:	The API specs/schema file you want to use as input for validation"
-	
+
 	To enter Python virtualenv, type 'source koios-tests/bin/activate'.
 	To exit from Python virtualenv, you can run 'deactivate'.
-	
+
 	EOF

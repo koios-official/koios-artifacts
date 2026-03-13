@@ -1,5 +1,3 @@
-DELETE TABLE IF EXISTS grest.pool_active_stake_cache;
-
 CREATE TABLE IF NOT EXISTS grest.epoch_active_stake_cache (
   epoch_no bigint NOT NULL,
   amount lovelace NOT NULL,
