@@ -50,7 +50,7 @@ BEGIN
         mto.ident = _asset_id
         AND block.block_no >= _after_block_height
         AND (_history = TRUE OR txo.consumed_by_tx_id IS NULL)
-      ORDER BY tx.id DESC, txo.index;
+      ORDER BY tx.id DESC, txo.index
     ) AS tx_hashes ORDER BY tx_hashes.block_no DESC;
 END;
 $$;
