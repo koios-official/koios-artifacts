@@ -237,9 +237,12 @@ BEGIN
     END IF;
   END IF;
 
-  -- Process in batches of 50 epochs (smaller batch) to avoid huge transactions
+  DELETE FROM grest.pool_history_cache
+  WHERE epoch_no >= _epoch_no_to_insert_from;
+
   _insert_epoch := _epoch_no_to_insert_from;
-  
+
+  -- Process in batches of 50 epochs (smaller batch) to avoid huge transactions
   WHILE _insert_epoch <= _curr_epoch LOOP
     _batch_end_epoch := LEAST(_insert_epoch + 50, _curr_epoch + 1);
     
