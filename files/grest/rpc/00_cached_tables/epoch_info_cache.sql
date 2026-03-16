@@ -140,7 +140,7 @@ BEGIN
       ) AS reward_pot ON TRUE
     WHERE e.no >= _epoch_no_to_insert_from
     ORDER BY
-      b.time ASC,
+      e.start_time ASC,
       b.id ASC,
       e.no ASC;
 
