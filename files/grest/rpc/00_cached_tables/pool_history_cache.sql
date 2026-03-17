@@ -247,7 +247,20 @@ BEGIN
 
     INSERT INTO grest.pool_history_cache (
       SELECT * FROM grest.get_pool_history_data_bulk(_insert_epoch::word31type, null::text [], _batch_end_epoch::word31type)
-    );
+    )
+    ON CONFLICT (pool_id, epoch_no) 
+    DO UPDATE SET
+      active_stake = EXCLUDED.active_stake,
+      active_stake_pct = EXCLUDED.active_stake_pct,
+      saturation_pct = EXCLUDED.saturation_pct,
+      block_cnt = EXCLUDED.block_cnt,
+      delegator_cnt = EXCLUDED.delegator_cnt,
+      pool_fee_variable = EXCLUDED.pool_fee_variable,
+      pool_fee_fixed = EXCLUDED.pool_fee_fixed,
+      pool_fees = EXCLUDED.pool_fees,
+      deleg_rewards = EXCLUDED.deleg_rewards,
+      member_rewards = EXCLUDED.member_rewards,
+      epoch_ros = EXCLUDED.epoch_ros; 
 
     INSERT INTO grest.control_table (key, last_value)
       VALUES ('pool_history_cache_last_updated', NOW() AT TIME ZONE 'utc')
