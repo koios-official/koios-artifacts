@@ -36,7 +36,7 @@ BEGIN
       tx_hashes.block_no,
       EXTRACT(EPOCH FROM tx_hashes.time)::integer
     FROM (
-      SELECT DISTINCT ON (tx.hash)
+      SELECT DISTINCT ON (tx.id)
         tx.hash,
         block.epoch_no,
         block.block_no,
