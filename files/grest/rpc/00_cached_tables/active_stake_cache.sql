@@ -55,7 +55,7 @@ BEGIN
     SELECT COALESCE(
       (SELECT last_value::integer
         FROM grest.control_table
-        WHERE key = 'last_active_stake_validated_epoch'), _epoch_no - 3) INTO _last_active_stake_validated_epoch;
+        WHERE key = 'last_active_stake_validated_epoch'), 0) INTO _last_active_stake_validated_epoch;
 
     -- EPOCH ACTIVE STAKE CACHE
     INSERT INTO grest.epoch_active_stake_cache
