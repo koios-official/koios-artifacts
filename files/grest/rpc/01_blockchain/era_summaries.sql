@@ -25,7 +25,7 @@ AS $$
   FROM grest.era_map AS em
   LEFT JOIN public.epoch_param AS ep ON ep.protocol_major::text = em.protocol_major::text AND ep.protocol_minor::text = em.protocol_minor::text
   LEFT JOIN grest.epoch_info_cache AS ei ON ep.epoch_no = ei.epoch_no
-  ORDER BY em.protocol_major,em.protocol_minor
+  ORDER BY em.protocol_major, em.protocol_minor, em.era, ei.epoch_no ASC
   ;
 $$;
 
