@@ -44,7 +44,7 @@ AS $$
     trw.treasury_withdrawal::text,
     trw.reserve_withdrawal::text
   FROM public.ada_pots AS ap
-    INNER JOIN treasury_reserve_withdrawals trw ON TRUE
+    LEFT JOIN treasury_reserve_withdrawals trw ON TRUE
   WHERE (_epoch_no IS NOT NULL AND ap.epoch_no = _epoch_no)
     OR (_epoch_no IS NULL)
   ORDER BY ap.epoch_no DESC;
