@@ -23,7 +23,7 @@ import (
 type DBStore interface {
 	DiscoverWorkItems(ctx context.Context, batchSize int, pollStaleAfter, failedRetryAfter time.Duration, allowList, denyList []string) ([]storage.WorkItem, error)
 	UpsertBatch(ctx context.Context, batch []storage.PoolMetadata) error
-	MarkPoolAttempted(ctx context.Context, poolID, lastPoolUpdateID int64, succeeded bool) error
+	MarkPoolAttempted(ctx context.Context, poolID, lastPoolUpdateID int64, succeeded bool, baseSeconds int) error
 }
 
 // Fetcher is the cycle driver.
@@ -126,13 +126,16 @@ func (f *Fetcher) runCycle(ctx context.Context) {
 
 // markFailedAttempts calls MarkPoolAttempted(false) for each result that
 // did not succeed; best-effort — failures here are logged but don't abort
-// the cycle.
+// the cycle. The baseSeconds argument controls the exponential-backoff
+// floor (failed_pool_retry_seconds from config); successive failures
+// multiply the wait up to 2^10.
 func (f *Fetcher) markFailedAttempts(ctx context.Context, results []Result) {
+	baseSecs := int(f.cfg.FailedPoolRetry().Seconds())
 	for _, r := range results {
 		if r.Succeeded() {
 			continue
 		}
-		if err := f.db.MarkPoolAttempted(ctx, r.PoolID, r.PoolUpdateID, false); err != nil {
+		if err := f.db.MarkPoolAttempted(ctx, r.PoolID, r.PoolUpdateID, false, baseSecs); err != nil {
 			f.log.Warn("mark_failed_attempt_failed",
 				slog.Int64("pool_id", r.PoolID),
 				slog.String("err", err.Error()),

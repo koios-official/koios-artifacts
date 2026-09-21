@@ -155,23 +155,22 @@ JOIN public.pool_metadata_ref  pmr ON pmr.id = lp.meta_id
 LEFT JOIN %s.pool_offchain_metadata pom ON pom.pool_id = ph.id
 WHERE pmr.url IS NOT NULL
   AND (
-       pom.pool_id IS NULL
-    OR pom.last_pool_update_id IS DISTINCT FROM lp.pu_id
+       pom.pool_id IS NULL                                                                  -- brand-new pool
+    OR pom.last_pool_update_id IS DISTINCT FROM lp.pu_id                                     -- on-chain change
     -- last attempt was success AND it's old enough (long poll cycle)
-    OR (pom.last_succeeded_polled_at >= COALESCE(pom.last_failed_polled_at, pom.last_succeeded_polled_at)
+    OR (pom.next_attempt_at IS NULL
         AND pom.last_succeeded_polled_at < now() - make_interval(secs => $1::bigint))
-    -- last attempt was failure AND it's been long enough (short retry cycle)
-    OR (pom.last_failed_polled_at IS NOT NULL
-        AND pom.last_failed_polled_at > pom.last_succeeded_polled_at
-        AND pom.last_failed_polled_at < now() - make_interval(secs => $2::bigint))
+    -- last attempt was failure; the daemon set next_attempt_at to
+    -- now() + base * 2^(count-1) on the failure. Check the schedule.
+    OR (pom.next_attempt_at IS NOT NULL AND pom.next_attempt_at <= now())
   )
-LIMIT $3;
+LIMIT $2;
 `, schemaIdent)
 	var staleSecs int64 = int64(pollStaleAfter.Seconds())
 	if staleSecs <= 0 {
 		staleSecs = 1
 	}
-	rows, err := p.Query(ctx, q, pollSecs, retrySecs, batchSize)
+	rows, err := p.Query(ctx, q, pollSecs, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("discover work: %w", err)
 	}
@@ -290,12 +289,12 @@ func (p *Pool) UpsertBatch(ctx context.Context, batch []PoolMetadata) error {
 INSERT INTO %s (
   pool_id, meta_url, meta_hash, meta_json, meta_bytes,
   last_polled, last_pool_update_id, is_valid,
-  last_succeeded_polled_at
+  last_succeeded_polled_at, consecutive_failures, next_attempt_at
 )
 SELECT
   pool_id, meta_url, meta_hash, meta_json, meta_bytes,
   last_polled, last_pool_update_id, is_valid,
-  last_polled
+  last_polled, 0, NULL
 FROM %s
 ON CONFLICT (pool_id) DO UPDATE SET
   meta_url                   = EXCLUDED.meta_url,
@@ -305,7 +304,9 @@ ON CONFLICT (pool_id) DO UPDATE SET
   last_polled                = EXCLUDED.last_polled,
   last_pool_update_id        = EXCLUDED.last_pool_update_id,
   is_valid                   = EXCLUDED.is_valid,
-  last_succeeded_polled_at   = EXCLUDED.last_succeeded_polled_at;
+  last_succeeded_polled_at   = EXCLUDED.last_succeeded_polled_at,
+  consecutive_failures       = 0,
+  next_attempt_at            = NULL;
 `, tableIdent, stageIdent)
 	if _, err := tx.Exec(ctx, mergeSQL); err != nil {
 		return fmt.Errorf("merge into %s: %w", tableIdent, err)
@@ -326,23 +327,32 @@ ON CONFLICT (pool_id) DO UPDATE SET
 // Failure-mode behaviour: bumps last_polled and last_failed_polled_at to now,
 // leaves last_succeeded_polled_at at its prior value (so the discovery query
 // sees the pool as "currently failing" and routes it through the retry cycle).
-func (p *Pool) MarkPoolAttempted(ctx context.Context, poolID, lastPoolUpdateID int64, succeeded bool) error {
-	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
+func (p *Pool) MarkPoolAttempted(ctx context.Context, poolID, lastPoolUpdateID int64, succeeded bool, baseSeconds int) error {
 	tableIdent := pgx.Identifier{p.Schema(), "pool_offchain_metadata"}.Sanitize()
 	if succeeded {
-		// Successful path goes through the normal UPSERT (which already
-		// updates last_succeeded_polled_at). This method is a no-op for
-		// success so callers can use it uniformly.
+		// Successful path goes through UpsertBatch (which already resets
+		// consecutive_failures=0 and next_attempt_at=NULL). This method
+		// is a no-op for success so callers can use it uniformly.
 		return nil
 	}
+	if baseSeconds < 1 {
+		baseSeconds = 60
+	}
+	// UPDATE increments consecutive_failures in-place, then computes the
+	// exponential backoff delay (baseSeconds * 2^(n-1)) and stores it
+	// as an absolute next_attempt_at. Cap at 2^10 * base (1024x base)
+	// so we don't go past ~17 hours on the default 60s base. The success
+	// path of UpsertBatch resets consecutive_failures=0 and
+	// next_attempt_at=NULL on any successful fetch.
 	sql := fmt.Sprintf(`
 UPDATE %s
 SET last_polled = now(),
-    last_failed_polled_at = now()
+    last_failed_polled_at = now(),
+    consecutive_failures = consecutive_failures + 1,
+    next_attempt_at      = now() + make_interval(secs => $3::bigint * pow(2, GREATEST(0, LEAST(consecutive_failures, 10)))::bigint)
 WHERE pool_id = $1 AND last_pool_update_id = $2
 `, tableIdent)
-	_, err := p.Exec(ctx, sql, poolID, lastPoolUpdateID)
-	_ = schemaIdent
+	_, err := p.Exec(ctx, sql, poolID, lastPoolUpdateID, int64(baseSeconds))
 	return err
 }
 
