@@ -303,7 +303,7 @@ func RunMigrations(ctx context.Context, dbURL string) error {
 // the SQL files co-located under files/grest/rpc relative to the repo root;
 // operators can override by setting KOIOS_MIGRATIONS_DIR.
 func migrationsSource() string {
-	if d := osGetenv("KOIOS_MIGRATIONS_DIR"); d != "" {
+	if d := osGetenvFunc("KOIOS_MIGRATIONS_DIR"); d != "" {
 		return "file://" + d
 	}
 	if existsDir("migrations") {
@@ -318,10 +318,6 @@ func existsDir(p string) bool {
 	if p == "" {
 		return false
 	}
-	fi, err := osStat(p)
+	fi, err := osStatFunc(p)
 	return err == nil && fi.IsDir()
 }
-
-// Indirection so the stdlib import doesn't leak unnecessarily elsewhere.
-var osStat = osStatFunc
-var osGetenv = osGetenvFunc

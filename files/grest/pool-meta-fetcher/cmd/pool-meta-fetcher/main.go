@@ -1,27 +1,31 @@
 // Package main is the entry point for koios-pool-meta-fetcher.
 //
-// The daemon periodically fetches off-chain pool metadata from URLs declared in
-// on-chain pool_update certificates, validates the responses, and upserts them
-// into grest.pool_offchain_metadata.
+// The daemon periodically fetches off-chain pool metadata from URLs declared
+// in on-chain pool_update certificates, validates the responses, and upserts
+// them into grest.pool_offchain_metadata.
 //
-// See ../../../../openspec/proposal.md for the change rationale and
-// ../../../../openspec/specs/pool-offchain-fetcher/spec.md for the contract.
+// See ../../openspec/proposal.md for the change rationale and
+// ../../openspec/specs/pool-offchain-fetcher/spec.md for the contract.
 package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/config"
+	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/fetcher"
 	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/health"
+	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/ipfilter"
 	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/storage"
 )
 
@@ -36,7 +40,7 @@ func main() {
 	cfgPath := flag.String("config", defaultConfigPath, "Path to YAML config file")
 	flag.Parse()
 
-	logger, logLevel := newLogger(slog.LevelInfo)
+	logger := newLoggerAt(slog.LevelInfo)
 	slog.SetDefault(logger)
 
 	logger.Info("starting koios-pool-meta-fetcher",
@@ -46,30 +50,26 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath, logger)
 	if err != nil {
-		logger.Error("config load failed", slog.String("err", err.Error()))
+		logger.Error("config_load_failed", slog.String("err", err.Error()))
 		os.Exit(exitCodeConfig)
 	}
-	logger.Info("config loaded",
+	logger.Info("config_loaded",
 		slog.String("network", string(cfg.NetworkName)),
 		slog.Bool("fetch_enabled", cfg.Fetch.Enabled),
-		slog.Duration("poll_interval", cfg.Fetch.Poll.PollInterval),
+		slog.Int("poll_interval_seconds", cfg.Fetch.Poll.PollIntervalSeconds),
 	)
 
-	// Re-log at the configured level now that we know it.
-	if logLevel != cfg.Logging.Level {
-		logger = newLoggerAt(cfg.Logging.Level)
-		slog.SetDefault(logger)
-	}
+	logger = newLoggerAt(cfg.Logging.Level.ToSlog())
+	slog.SetDefault(logger)
 
 	// Health server (always up).
 	hs := health.NewServer(health.Config{
 		ListenAddr:           cfg.Health.ListenAddr,
 		ListenPort:           cfg.Health.ListenPort,
 		ReadyzDBGraceSeconds: cfg.Health.ReadyzDBGraceSeconds,
-		PingFn:               nil, // wired below once DB is up
 	})
 	if err := hs.Start(); err != nil {
-		logger.Error("health server failed to start", slog.String("err", err.Error()))
+		logger.Error("health_server_failed_to_start", slog.String("err", err.Error()))
 		os.Exit(exitCodeRuntime)
 	}
 	defer func() {
@@ -77,73 +77,127 @@ func main() {
 		defer cancel()
 		_ = hs.Stop(shutdownCtx)
 	}()
-	logger.Info("health server up",
-		slog.String("addr", hs.Addr()),
-	)
+	logger.Info("health_server_up", slog.String("addr", hs.Addr()))
 
-	// Honour fetch.enabled=false as a soft disable: health stays up, no DB connect.
+	// honour fetch.enabled=false as a soft disable.
 	if !cfg.Fetch.Enabled {
-		logger.Info("fetch disabled by config; daemon idle (health-only)")
+		logger.Info("fetch_disabled_by_config")
 		<-awaitShutdown()
-		logger.Info("shutdown requested; exiting cleanly")
+		logger.Info("shutdown_complete")
 		return
 	}
 
 	// DB pool.
-	poolCtx, poolCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	poolCtx, poolCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	pg, err := storage.NewPool(poolCtx, cfg.DatabaseURL, storage.PoolOptions{
-		MaxConns:          cfg.Database.PoolMaxConns,
-		MinConns:          cfg.Database.PoolMinConns,
-		MaxConnLifetime:   cfg.Database.PoolMaxConnLifetime,
-		MaxConnIdleTime:   cfg.Database.PoolMaxConnIdleTime,
-		StatementTimeout:  time.Duration(cfg.Database.StatementTimeoutMs) * time.Millisecond,
-		ApplicationName:   "koios-pool-meta-fetcher",
+		MaxConns:         cfg.Database.PoolMaxConns,
+		MinConns:         cfg.Database.PoolMinConns,
+		MaxConnLifetime:  cfg.Database.PoolMaxConnLifetime,
+		MaxConnIdleTime:  cfg.Database.PoolMaxConnIdleTime,
+		StatementTimeout: time.Duration(cfg.Database.StatementTimeoutMs) * time.Millisecond,
+		ApplicationName:  "koios-pool-meta-fetcher",
 	})
 	poolCancel()
 	if err != nil {
-		logger.Error("db pool init failed", slog.String("err", err.Error()))
+		logger.Error("db_pool_init_failed", slog.String("err", err.Error()))
 		os.Exit(exitCodeDB)
 	}
 	defer pg.Close()
-	logger.Info("db pool ready")
+	logger.Info("db_pool_ready")
 
-	// Wire the readyz probe to use the pool.
+	// Wire readyz + (optionally) adjust meta_bytes check to match max_body_bytes.
 	hs.SetPingFn(func(ctx context.Context) error {
 		_, _, pingErr := pg.Ping(ctx)
 		return pingErr
 	})
+	adjustCtx, adjustCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := pg.AdjustMetaBytesCheckConstraint(adjustCtx, cfg.Fetch.Validation.MaxBodyBytes); err != nil {
+		logger.Warn("adjust_check_failed", slog.String("err", err.Error()))
+	}
+	adjustCancel()
 
-	// Run migrations (idempotent, no-op on subsequent runs).
+	// Migrations.
 	migCtx, migCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	if err := storage.RunMigrations(migCtx, cfg.DatabaseURL); err != nil {
 		migCancel()
-		logger.Error("migrations failed", slog.String("err", err.Error()))
+		logger.Error("migrations_failed", slog.String("err", err.Error()))
 		os.Exit(exitCodeDB)
 	}
 	migCancel()
-	logger.Info("migrations applied")
+	logger.Info("migrations_applied")
 
-	// Daemon root context with shutdown semantics.
+	// IP filter (always instantiated — needs policy=allow_all to be a no-op).
+	policy, err := ipfilter.PolicyFromString(string(cfg.Fetch.PrivateIPPolicy))
+	if err != nil {
+		logger.Error("ipfilter_init_failed", slog.String("err", err.Error()))
+		os.Exit(exitCodeConfig)
+	}
+	filter := ipfilter.New(policy, cfg.Fetch.PrivateIPAllowList, logger)
+
+	// HTTP client with IP filter + per-request timeouts.
+	httpClient := &http.Client{
+		Timeout: cfg.HTTPTimeout(),
+		Transport: filter.WrapTransport(&http.Transport{
+			TLSClientConfig: buildTLSConfig(cfg),
+		}),
+		CheckRedirect: buildRedirectPolicy(cfg),
+	}
+
+	// Pool fetcher.
+	pf := fetcher.NewPoolFetcher(httpClient, fetcher.ValidationConfig{
+		MinBodyBytes:           cfg.Fetch.Validation.MinBodyBytes,
+		MaxBodyBytes:           cfg.Fetch.Validation.MaxBodyBytes,
+		AllowedContentTypes:    cfg.Fetch.Validation.AllowedContentTypes,
+		AllowTextHTMLWithBrace: cfg.Fetch.Validation.AllowTextHTMLWithBrace,
+		JSON: fetcher.JSONValidationConfig{
+			RequiredFields:       cfg.Fetch.Validation.JSON.RequiredFields,
+			MaxDepth:             cfg.Fetch.Validation.JSON.MaxDepth,
+			MaxStringLength:      cfg.Fetch.Validation.JSON.MaxStringLength,
+			MaxKeysPerObject:     cfg.Fetch.Validation.JSON.MaxKeysPerObject,
+			MaxArrayLength:       cfg.Fetch.Validation.JSON.MaxArrayLength,
+			AllowAdditionalFields: cfg.Fetch.Validation.JSON.AllowAdditionalFields,
+		},
+		Hash: fetcher.HashValidationConfig{
+			Algorithm:     string(cfg.Fetch.Validation.Hash.Algorithm),
+			LogMismatches: cfg.Fetch.Validation.Hash.LogMismatches,
+		},
+	}, logger)
+	pf.SetUserAgent(cfg.Fetch.HTTP.UserAgent)
+
+	// Cycle driver.
+	f := fetcher.New(cfg, pg, pf, logger)
+	if cfg.Fetch.WorkQueue.ExposeDebugEndpoint {
+		hs.SetSnapshotDebugPools(f.Snapshot)
+	}
+
+	// Daemon root context.
 	ctx, cancel := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM,
 	)
 	defer cancel()
 
-	// Translate SIGHUP to ctx-driven reload signal.
+	// SIGHUP handler for live-reload.
+	var cfgMu sync.Mutex
+	currentCfg := cfg
 	reloadCh := make(chan os.Signal, 1)
 	signal.Notify(reloadCh, syscall.SIGHUP)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for range reloadCh {
-			logger.Info("SIGHUP received; reloading config")
+			logger.Info("sighup_received")
 			newCfg, err := config.Load(*cfgPath, logger)
 			if err != nil {
-				logger.Warn("config reload failed; keeping current", slog.String("err", err.Error()))
+				logger.Warn("reload_failed", slog.String("err", err.Error()))
 				continue
 			}
-			// Apply hot-reloadable fields. Non-reloadable fields are logged and
-			// silently kept at their previous values (per spec §live-reload).
-			if r := applyReload(cfg, newCfg); len(r.Changed) > 0 || len(r.Skipped) > 0 {
-				logger.Info("config reloaded",
+			cfgMu.Lock()
+			r := applyReload(currentCfg, newCfg)
+			currentCfg = newCfg
+			cfgMu.Unlock()
+			if len(r.Changed) > 0 || len(r.Skipped) > 0 {
+				logger.Info("config_reloaded",
 					slog.Any("changed", r.Changed),
 					slog.Any("skipped", r.Skipped),
 				)
@@ -151,44 +205,119 @@ func main() {
 		}
 	}()
 
-	logger.Info("entering fetch loop",
+	logger.Info("entering_fetch_loop",
 		slog.Int("concurrency", cfg.Fetch.WorkQueue.Concurrency),
 		slog.Int("batch_size", cfg.Fetch.WorkQueue.BatchSize),
 	)
 
-	// Fetch loop (placeholder body — wired up in Phase 3).
-	err = runFetchLoop(ctx, cfg, pg, logger)
+	err = f.Run(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
-		logger.Error("fetch loop exited with error", slog.String("err", err.Error()))
+		logger.Error("fetch_loop_exited_error", slog.String("err", err.Error()))
 		os.Exit(exitCodeRuntime)
 	}
 
-	logger.Info("shutdown complete")
+	close(reloadCh)
+	wg.Wait()
+	logger.Info("shutdown_complete")
 }
 
-// runFetchLoop drives the poll-cycle loop. Phase 2 is the skeleton; Phase 3
-// implements the workers and storage upsert.
-func runFetchLoop(
-	ctx context.Context,
-	cfg *config.Config,
-	pg *storage.Pool,
-	logger *slog.Logger,
-) error {
-	ticker := time.NewTicker(cfg.Fetch.Poll.PollInterval)
-	defer ticker.Stop()
+// -----------------------------------------------------------------------------
+// TLS / redirect policy
+// -----------------------------------------------------------------------------
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case t := <-ticker.C:
-			logger.Debug("tick (work scheduled in Phase 3)", slog.Time("at", t))
+func buildTLSConfig(cfg *config.Config) *tls.Config {
+	t := &tls.Config{
+		InsecureSkipVerify: cfg.Fetch.HTTP.SkipTLSVerify,
+	}
+	switch cfg.Fetch.HTTP.TLSMinVersion {
+	case "1.3":
+		t.MinVersion = tls.VersionTLS13
+	default:
+		t.MinVersion = tls.VersionTLS12
+	}
+	return t
+}
+
+// buildRedirectPolicy implements fetch.http.max_redirects and the strict
+// same-host guard from spec §fetch.validation.follow_cross_host_redirects.
+func buildRedirectPolicy(cfg *config.Config) func(*http.Request, []*http.Request) error {
+	max := cfg.Fetch.HTTP.MaxRedirects
+	followCrossHost := cfg.Fetch.Validation.FollowCrossHostRedirects
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= max {
+			return fmt.Errorf("stopped after %d redirects", max)
 		}
+		if !followCrossHost && len(via) > 0 {
+			last := via[len(via)-1].URL.Host
+			this := req.URL.Host
+			if last != this {
+				return fmt.Errorf("cross-host redirect blocked: %s → %s", last, this)
+			}
+		}
+		return nil
 	}
 }
 
-// awaitShutdown blocks until SIGINT / SIGTERM. Used when fetch is disabled so
-// the daemon still serves /healthz cleanly without entering the fetch loop.
+// -----------------------------------------------------------------------------
+// SIGHUP reload diffing
+// -----------------------------------------------------------------------------
+
+type reloadReport struct {
+	Changed []string
+	Skipped []string
+}
+
+func applyReload(cfg, newCfg *config.Config) reloadReport {
+	r := reloadReport{}
+	if cfg.Fetch.Poll.PollIntervalSeconds != newCfg.Fetch.Poll.PollIntervalSeconds {
+		r.Changed = append(r.Changed, fmt.Sprintf("fetch.poll.poll_interval_seconds: %d → %d",
+			cfg.Fetch.Poll.PollIntervalSeconds, newCfg.Fetch.Poll.PollIntervalSeconds))
+		cfg.Fetch.Poll.PollIntervalSeconds = newCfg.Fetch.Poll.PollIntervalSeconds
+	}
+	if cfg.Fetch.Poll.MinPollIntervalSecs != newCfg.Fetch.Poll.MinPollIntervalSecs {
+		r.Changed = append(r.Changed, fmt.Sprintf("fetch.poll.min_poll_interval_seconds: %d → %d",
+			cfg.Fetch.Poll.MinPollIntervalSecs, newCfg.Fetch.Poll.MinPollIntervalSecs))
+		cfg.Fetch.Poll.MinPollIntervalSecs = newCfg.Fetch.Poll.MinPollIntervalSecs
+	}
+	if cfg.Fetch.WorkQueue.Concurrency != newCfg.Fetch.WorkQueue.Concurrency {
+		r.Changed = append(r.Changed, fmt.Sprintf("fetch.work_queue.concurrency: %d → %d",
+			cfg.Fetch.WorkQueue.Concurrency, newCfg.Fetch.WorkQueue.Concurrency))
+		cfg.Fetch.WorkQueue.Concurrency = newCfg.Fetch.WorkQueue.Concurrency
+	}
+	if cfg.Logging.Level != newCfg.Logging.Level {
+		r.Changed = append(r.Changed, fmt.Sprintf("logging.level: %s → %s", cfg.Logging.Level, newCfg.Logging.Level))
+		cfg.Logging.Level = newCfg.Logging.Level
+		slog.SetDefault(newLoggerAt(cfg.Logging.Level.ToSlog()))
+	}
+
+	if cfg.DatabaseURL != newCfg.DatabaseURL {
+		r.Skipped = append(r.Skipped, "database_url (restart required)")
+	}
+	if cfg.Health.ListenAddr != newCfg.Health.ListenAddr || cfg.Health.ListenPort != newCfg.Health.ListenPort {
+		r.Skipped = append(r.Skipped, "health.listen_addr / health.listen_port (restart required)")
+	}
+	if cfg.NetworkName != newCfg.NetworkName {
+		r.Skipped = append(r.Skipped, "network_name (restart required)")
+	}
+
+	// Phase 3 narrows down which other knobs are hot-reloadable per spec.
+	// Implementation deferred — at minimum: validation.*, retry.*, pools_overrides,
+	// http.{timeout,connect_timeout,max_redirects,user_agent,extra_headers}.
+	return r
+}
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+func newLoggerAt(level slog.Level) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: false,
+	}))
+}
+
+// awaitShutdown blocks until SIGINT / SIGTERM.
 func awaitShutdown() <-chan struct{} {
 	ch := make(chan struct{})
 	sigCh := make(chan os.Signal, 1)
@@ -200,78 +329,7 @@ func awaitShutdown() <-chan struct{} {
 	return ch
 }
 
-// reloadReport is the diff between the previous and newly-loaded configs.
-type reloadReport struct {
-	Changed []string
-	Skipped []string
-}
-
-// applyReload merges hot-reloadable fields from `newCfg` into the live `cfg`.
-// Non-reloadable changes are recorded in `Skipped`. Returns the diff.
-func applyReload(cfg, newCfg *config.Config) reloadReport {
-	r := reloadReport{}
-
-	// Hot-reloadable
-	if cfg.Fetch.Poll.PollInterval != newCfg.Fetch.Poll.PollInterval {
-		r.Changed = append(r.Changed, fmt.Sprintf("fetch.poll.poll_interval_seconds: %d → %d",
-			int(cfg.Fetch.Poll.PollInterval.Seconds()), int(newCfg.Fetch.Poll.PollInterval.Seconds())))
-		cfg.Fetch.Poll.PollInterval = newCfg.Fetch.Poll.PollInterval
-	}
-	if cfg.Fetch.Poll.MinPollInterval != newCfg.Fetch.Poll.MinPollInterval {
-		r.Changed = append(r.Changed, fmt.Sprintf("fetch.poll.min_poll_interval_seconds: %d → %d",
-			int(cfg.Fetch.Poll.MinPollInterval.Seconds()), int(newCfg.Fetch.Poll.MinPollInterval.Seconds())))
-		cfg.Fetch.Poll.MinPollInterval = newCfg.Fetch.Poll.MinPollInterval
-	}
-	if cfg.Fetch.WorkQueue.Concurrency != newCfg.Fetch.WorkQueue.Concurrency {
-		r.Changed = append(r.Changed, fmt.Sprintf("fetch.work_queue.concurrency: %d → %d",
-			cfg.Fetch.WorkQueue.Concurrency, newCfg.Fetch.WorkQueue.Concurrency))
-		cfg.Fetch.WorkQueue.Concurrency = newCfg.Fetch.WorkQueue.Concurrency
-	}
-	if cfg.Logging.Level != newCfg.Logging.Level {
-		r.Changed = append(r.Changed, fmt.Sprintf("logging.level: %s → %s", cfg.Logging.Level, newCfg.Logging.Level))
-		cfg.Logging.Level = newCfg.Logging.Level
-		slog.SetDefault(newLoggerAt(cfg.Logging.Level))
-	}
-
-	// Non-reloadable: warning only
-	if cfg.DatabaseURL != newCfg.DatabaseURL {
-		r.Skipped = append(r.Skipped, "database_url (restart required)")
-	}
-	if cfg.Health.ListenAddr != newCfg.Health.ListenAddr || cfg.Health.ListenPort != newCfg.Health.ListenPort {
-		r.Skipped = append(r.Skipped, "health.listen_addr / health.listen_port (restart required)")
-	}
-	if cfg.NetworkName != newCfg.NetworkName {
-		r.Skipped = append(r.Skipped, "network_name (restart required)")
-	}
-
-	// Indicate direction of full-config replacement for remaining hot fields.
-	// (Wire up the rest in Phase 3 per spec requirement: live-reload.)
-	return r
-}
-
-func newLogger(level slog.Level) (*slog.Logger, slog.Level) {
-	return newLoggerAt(level), level
-}
-
-func newLoggerAt(level slog.Level) *slog.Logger {
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level:     level,
-		AddSource: false,
-	})
-	return slog.New(h)
-}
-
-// version is overridden at build time via:
+// version is overridden at build time:
 //
 //	go build -ldflags "-X main.version=1.2.3"
 var version = "dev"
-
-// Ensure the binary can locate /etc/koios even when started by systemd.
-func init() {
-	// Sanity: refuse to run as root in non-test scenarios if a downstream
-	// env var is set. (Logged; not enforced — operators decide.)
-	if os.Getuid() == 0 {
-		wd, _ := os.Getwd()
-		_ = filepath.Clean(wd)
-	}
-}
