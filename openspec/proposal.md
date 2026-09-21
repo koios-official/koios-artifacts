@@ -38,6 +38,8 @@ We want to:
 - **Out of scope**:
   - SMASH's policy endpoints (`/delist`, `/tickers`, `/policies`, `/errors`, BasicAuth
     admin surface) — grest layer never exposed these; we do not add them.
-  - Historical fetches (only current; overwrites in place).
+  - Historical fetches (only current; overwrites in place). `grest.pool_updates` is
+    therefore NOT repointed — it continues to read `public.off_chain_pool_data` for
+    historical `meta_json` lookups.
   - On-chain pool update tracker (still owned by db-sync → `pool_info_cache`).
   - Cardano ledger / consensus logic — pure URL fetcher.

@@ -1,0 +1,128 @@
+# koios-pool-meta-fetcher
+
+A small, configurable Go daemon that fetches off-chain stake-pool metadata for every
+registered Cardano pool and persists the *current* raw payload into
+`grest.pool_offchain_metadata`.
+
+It replaces the Haskell `cardano-smash-server` plus db-sync's
+`OffChainPoolDataFetcher` (`cardano-db-sync/src/Cardano/DbSync/OffChain.hs`), with
+operators in full control of every knob (see `pool-meta-fetcher.yaml`).
+
+## Why
+
+`cardano-db-sync` 13.7.x's off-chain pool metadata fetcher is a long-running thread
+inside the Haskell daemon. Years of upstream issues have not produced the operational
+changes the Koios team needs (configurable body cap, per-pool overrides, modern HTTP
+timeouts, deployable as a standalone service). This component:
+
+- reads each pool's most recent `pool_update` certificate,
+- downloads the URL it declares (defaulting to 512 KiB cap, configurable),
+- validates the response (size, content-type, JSON shape, optional Blake2b-256),
+- upserts the result in `grest.pool_offchain_metadata`,
+- and lets the existing `grest.pool_info` / `grest.pool_list` / `grest.pool_metadata`
+  RPCs read from the new table without changing their public response shape.
+
+For the full change rationale see
+[`../../openspec/proposal.md`](../../openspec/proposal.md).
+
+## Quick start
+
+```bash
+# Build
+make build
+
+# Create config
+cp pool-meta-fetcher.example.yaml /etc/koios/pool-meta-fetcher.yaml
+$EDITOR /etc/koios/pool-meta-fetcher.yaml
+
+# Run
+./pool-meta-fetcher --config /etc/koios/pool-meta-fetcher.yaml
+
+# Run under systemd
+sudo install systemd/koios-pool-meta-fetcher.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now koios-pool-meta-fetcher
+```
+
+## Health endpoints
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /healthz` | 200 OK while the process is alive. |
+| `GET /readyz`  | 200 OK if the last DB ping was within `health.readyz_db_grace_seconds`, else 503 with body `{"status":"degraded","reason":"db_unreachable","last_ping_age_seconds":N}`. |
+| `GET /debug/pools` | Only registered if `fetch.work_queue.expose_debug_endpoint: true`. Returns current in-flight + recent failures JSON. |
+
+Bind defaults to `0.0.0.0:8081` (see `pool-meta-fetcher.yaml`).
+
+## Configuration
+
+Schema and 32-rule validation are documented in
+[`../../openspec/specs/pool-meta-fetcher-config/spec.md`](../../openspec/specs/pool-meta-fetcher-config/spec.md).
+A working example is provided at `pool-meta-fetcher.example.yaml` in this directory.
+
+Only two keys are required:
+```yaml
+database_url: postgres://grest_owner:xxx@localhost:5432/cexplorer
+network_name: mainnet
+```
+Everything else has safe defaults; production mainnet should override the
+`fetch.work_queue.concurrency`, `fetch.poll.*`, and `fetch.validation.*_bytes` knobs.
+
+## Tuning painpoints addressed
+
+Each row corresponds to a known db-sync limitation; see the OpenSpec's
+`design.md §15` for the full P1–P26 matrix.
+
+| Pain | Knob | Default |
+|---|---|---|
+| 512 B body cap hardcoded | `fetch.validation.max_body_bytes` | `524288` (512 KiB) |
+| Content-Type allowlist hardcoded | `fetch.validation.allowed_content_types` | editable list |
+| Single 5-min tick, no per-pool floor | `fetch.poll.poll_interval_seconds`, `fetch.poll.min_poll_interval_seconds` | `300`, `60` |
+| Haskell-hardcoded backoff | `fetch.retry.{backoff_initial,backoff_max,backoff_multiplier}_seconds` | `30`, `86400`, `60` |
+| No HTTP timeout | `fetch.http.{timeout,connect_timeout}_seconds` | `30`, `10` |
+| Fixed user-agent | `fetch.http.user_agent` | `koios-pool-meta-fetcher/<ver>` |
+| Single-threaded fetcher | `fetch.work_queue.concurrency` | `16` |
+| Global `--allow-private-offchain-urls` | `fetch.private_ip_policy` | `block` (with `block\|allow_all\|allow_list`) |
+| No JSON structural validation | `fetch.validation.json.{required_fields,max_depth,max_string_length,...}` | CIP-6 minimums |
+| No per-pool override | `fetch.pools_overrides` (exact or glob match) | `[]` |
+| Requires db-sync restart to toggle | `fetch.enabled` + SIGHUP reload | live-reloadable |
+
+## Migrations
+
+Migrations are normal SQL files under `../rpc/` (the same files that the Koios
+PostgREST instance runs). The daemon invokes `golang-migrate` against the same
+source on startup. Override via `KOIOS_MIGRATIONS_DIR=/path/to/dir`.
+
+The hard ceiling on the `meta_bytes` column's CHECK constraint is enforced at the
+DB level; the daemon `ALTER`s the constraint at startup if
+`fetch.validation.max_body_bytes` differs from the DB default (5242880 bytes).
+
+## Disable db-sync's own fetcher
+
+`cardano-db-sync` 13.7.x has its own off-chain pool metadata fetcher, gated by
+`insert_options.offchain_pool_data`. To avoid double-fetching, set:
+
+```yaml
+insert_options:
+  offchain_pool_data: disable
+```
+
+`public.off_chain_pool_data` keeps getting written by db-sync for backwards
+compatibility with `grest.pool_updates` (historical queries) — leave it on, or
+backfill it once and disable afterwards.
+
+## Tests
+
+```bash
+make test          # unit tests
+make test-race     # -race detector
+make lint          # golangci-lint (install separately)
+```
+
+Integration tests live in `../tests/` (PostgREST + Schemathesis). The Go daemon
+itself is a thin process; its correctness is best validated against a fixture
+cardano-db-sync instance running on top of PostgreSQL.
+
+## License
+
+Apache-2.0 (matches the parent repository).

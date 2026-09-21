@@ -97,8 +97,8 @@ Both overloads of `grest.pool_list(...)` (`_lovelace_numeric boolean DEFAULT NUL
 ### Requirement: removal-of-public-off-chain-pool-data-joins
 
 After this capability rolls out and a single full poll cycle has elapsed (~10 minutes),
-no `grest.*` RPC SHALL reference `public.off_chain_pool_data` in its JOINs. The
-following files SHALL be updated:
+no `grest.*` RPC used for **current-state** queries SHALL reference
+`public.off_chain_pool_data` in its JOINs. The following files SHALL be updated:
 
 - `files/grest/rpc/pool/pool_info.sql`
 - `files/grest/rpc/pool/pool_list.sql`
@@ -106,7 +106,36 @@ following files SHALL be updated:
 
 #### Scenario: reference check
 - **WHEN** the rollout completes
-- **THEN** `grep -r 'off_chain_pool_data' files/grest/rpc/pool/` returns zero matches
+- **THEN** `grep -l 'off_chain_pool_data' files/grest/rpc/pool/pool_info.sql
+  files/grest/rpc/pool/pool_list.sql files/grest/rpc/pool/pool_metadata.sql` returns
+  zero matches
+
+### Requirement: pool-updates-out-of-scope
+
+The function `grest.pool_updates(...)` SHALL continue to source `meta_json` from
+`public.off_chain_pool_data`. It is intentionally **out of scope** for this proposal
+because it returns **historical** metadata at the time of each registration cert, while
+`grest.pool_offchain_metadata` only stores the **current** payload.
+
+Consumers calling `grest.pool_updates` with a focus on `meta_json` for recent
+registrations will see NULLs once db-sync's off-chain fetcher is disabled. Two
+acceptable resolutions for operators:
+
+1. Keep `insert_options.offchain_pool_data: enable` in db-sync (only the new
+   `grest.pool_offchain_metadata` table is read by the current-state RPCs; db-sync
+   continues to write to its own table for backwards-compatible historical queries).
+2. Disable db-sync's fetcher AND backfill `public.off_chain_pool_data` from
+   `grest.pool_offchain_metadata` on rollout (one-time migration script, out of scope
+   here).
+
+The default rollout plan in `design.md` §14 keeps db-sync's fetcher enabled for
+graceful coexistence.
+
+#### Scenario: pool_updates reads ocpd (unchanged)
+- **WHEN** `grest.pool_updates(_pool_bech32)` is called and db-sync OCPD is still
+  enabled
+- **THEN** historical `meta_json` values are returned, identical to pre-change
+  behaviour
 
 ### Requirement: no-hash-verification-rpc
 

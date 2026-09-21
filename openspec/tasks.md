@@ -24,6 +24,7 @@
 - [ ] Modify `pool/pool_info.sql` — LEFT JOIN new table for `meta_json`; **no new columns**
 - [ ] Modify `pool/pool_list.sql` (×2 overloads) — `ticker` from `meta_json->>'ticker'`
 - [ ] Modify `pool/pool_metadata.sql` — LEFT JOIN new table for `meta_json`
+- [ ] Note: `pool/pool_updates.sql` is intentionally NOT modified (historical data source)
 - [ ] Migration runbook (`MIGRATION.md`): step-by-step rollout / rollback
 
 ## Phase 2 — Go daemon skeleton (`files/grest/pool-meta-fetcher/`)
