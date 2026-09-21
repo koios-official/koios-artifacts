@@ -90,9 +90,9 @@ type FetchConfig struct {
 }
 
 type PollConfig struct {
-	PollIntervalSeconds       int `yaml:"poll_interval_seconds"`
-	MinPollIntervalSecs       int `yaml:"min_poll_interval_seconds"`
-	FailedPoolRetrySeconds    int `yaml:"failed_pool_retry_seconds"`
+	PollIntervalSeconds    int `yaml:"poll_interval_seconds"`
+	MinPollIntervalSecs    int `yaml:"min_poll_interval_seconds"`
+	FailedPoolRetrySeconds int `yaml:"failed_pool_retry_seconds"`
 }
 
 type WorkQueueConfig struct {
@@ -118,27 +118,27 @@ type HTTPConfig struct {
 }
 
 type ValidationConfig struct {
-	MinBodyBytes              int             `yaml:"min_body_bytes"`
-	MaxBodyBytes              int             `yaml:"max_body_bytes"`
-	AllowedContentTypes       []string        `yaml:"allowed_content_types"`
-	AllowTextHTMLWithBrace    bool            `yaml:"allow_text_html_with_brace"`
-	FollowCrossHostRedirects  bool            `yaml:"follow_cross_host_redirects"`
-	JSON                      JSONValidation  `yaml:"json"`
-	Hash                      HashValidation  `yaml:"hash"`
+	MinBodyBytes             int            `yaml:"min_body_bytes"`
+	MaxBodyBytes             int            `yaml:"max_body_bytes"`
+	AllowedContentTypes      []string       `yaml:"allowed_content_types"`
+	AllowTextHTMLWithBrace   bool           `yaml:"allow_text_html_with_brace"`
+	FollowCrossHostRedirects bool           `yaml:"follow_cross_host_redirects"`
+	JSON                     JSONValidation `yaml:"json"`
+	Hash                     HashValidation `yaml:"hash"`
 }
 
 type JSONValidation struct {
-	RequiredFields     []string `yaml:"required_fields"`
-	MaxDepth           int      `yaml:"max_depth"`
-	MaxStringLength    int      `yaml:"max_string_length"`
-	MaxKeysPerObject   int      `yaml:"max_keys_per_object"`
-	MaxArrayLength     int      `yaml:"max_array_length"`
-	AllowAdditionalFields bool  `yaml:"allow_additional_fields"`
+	RequiredFields        []string `yaml:"required_fields"`
+	MaxDepth              int      `yaml:"max_depth"`
+	MaxStringLength       int      `yaml:"max_string_length"`
+	MaxKeysPerObject      int      `yaml:"max_keys_per_object"`
+	MaxArrayLength        int      `yaml:"max_array_length"`
+	AllowAdditionalFields bool     `yaml:"allow_additional_fields"`
 }
 
 type HashValidation struct {
-	Algorithm       HashAlgorithm `yaml:"algorithm"`
-	LogMismatches   bool          `yaml:"log_mismatches"`
+	Algorithm     HashAlgorithm `yaml:"algorithm"`
+	LogMismatches bool          `yaml:"log_mismatches"`
 }
 
 type HashAlgorithm string
@@ -155,8 +155,8 @@ func (h HashAlgorithm) Valid() bool {
 type PrivateIPPolicyEnum string
 
 const (
-	PrivateIPBlock    PrivateIPPolicyEnum = "block"
-	PrivateIPAllowAll PrivateIPPolicyEnum = "allow_all"
+	PrivateIPBlock     PrivateIPPolicyEnum = "block"
+	PrivateIPAllowAll  PrivateIPPolicyEnum = "allow_all"
 	PrivateIPAllowList PrivateIPPolicyEnum = "allow_list"
 )
 
@@ -167,16 +167,16 @@ func (p PrivateIPPolicyEnum) Valid() bool {
 }
 
 type RetryConfig struct {
-	MaxAttempts             int `yaml:"max_attempts"`
-	BackoffInitialSeconds   int `yaml:"backoff_initial_seconds"`
-	BackoffMaxSeconds       int `yaml:"backoff_max_seconds"`
-	BackoffMultiplierSeconds int `yaml:"backoff_multiplier_seconds"`
-	PersistState            bool `yaml:"persist_state"`
+	MaxAttempts              int  `yaml:"max_attempts"`
+	BackoffInitialSeconds    int  `yaml:"backoff_initial_seconds"`
+	BackoffMaxSeconds        int  `yaml:"backoff_max_seconds"`
+	BackoffMultiplierSeconds int  `yaml:"backoff_multiplier_seconds"`
+	PersistState             bool `yaml:"persist_state"`
 }
 
 type PoolOverride struct {
-	Match     string            `yaml:"match"`
-	Overrides map[string]any    `yaml:"overrides"`
+	Match     string         `yaml:"match"`
+	Overrides map[string]any `yaml:"overrides"`
 }
 
 type MatchStyleEnum string
@@ -213,9 +213,9 @@ type HealthConfig struct {
 // -----------------------------------------------------------------------------
 
 type LogConfig struct {
-	Level     LogLevel `yaml:"level"`
+	Level     LogLevel  `yaml:"level"`
 	Format    LogFormat `yaml:"format"`
-	AddSource bool     `yaml:"add_source"`
+	AddSource bool      `yaml:"add_source"`
 }
 
 type LogLevel string
@@ -291,8 +291,8 @@ func defaults() *Config {
 				ExtraHeaders:          map[string]string{},
 			},
 			Validation: ValidationConfig{
-				MinBodyBytes:             16,
-				MaxBodyBytes:             524288,
+				MinBodyBytes: 16,
+				MaxBodyBytes: 524288,
 				AllowedContentTypes: []string{
 					"application/json",
 					"application/ld+json",
@@ -307,11 +307,11 @@ func defaults() *Config {
 					RequiredFields: []string{
 						"name", "description", "ticker", "homepage",
 					},
-					MaxDepth:               8,
-					MaxStringLength:        8192,
-					MaxKeysPerObject:       128,
-					MaxArrayLength:         256,
-					AllowAdditionalFields:  true,
+					MaxDepth:              8,
+					MaxStringLength:       8192,
+					MaxKeysPerObject:      128,
+					MaxArrayLength:        256,
+					AllowAdditionalFields: true,
 				},
 				Hash: HashValidation{
 					Algorithm:     HashBlake2b256,
@@ -496,8 +496,8 @@ var configRules = []configRule{
 		if m > p {
 			return &ValidationError{Field: "fetch.poll.min_poll_interval_seconds",
 				Value: m, Reason: fmt.Sprintf("must be <= poll_interval_seconds (%d)", p)}
-}
-	return nil
+		}
+		return nil
 	},
 	// 4a — failed_pool_retry must be > 0 and <= poll_interval (otherwise semantics invert)
 	func(c *Config) error {
@@ -537,7 +537,7 @@ var configRules = []configRule{
 	func(c *Config) error {
 		if c.Fetch.WorkQueue.MaxInflight < c.Fetch.WorkQueue.Concurrency {
 			return &ValidationError{Field: "fetch.work_queue.max_inflight",
-				Value: c.Fetch.WorkQueue.MaxInflight,
+				Value:  c.Fetch.WorkQueue.MaxInflight,
 				Reason: fmt.Sprintf("must be >= concurrency (%d)", c.Fetch.WorkQueue.Concurrency)}
 		}
 		return nil
@@ -809,7 +809,7 @@ var configRules = []configRule{
 }
 
 var (
-	bech32PoolRe = regexp.MustCompile(`^pool1[ac-hij-np-z02-9]{20,}$`)
+	bech32PoolRe  = regexp.MustCompile(`^pool1[ac-hij-np-z02-9]{20,}$`)
 	schemaIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 

@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/golang-migrate/migrate/v4"
 	migratepgx "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	migrateiofs "github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 //go:embed migrations/*.sql
@@ -30,8 +30,8 @@ var migrationsFS embed.FS
 // File-system helpers used by migrationsSource. Defined as vars so tests can
 // stub them if ever needed; default to the real os calls.
 var (
-	osStatFunc  = func(p string) (os.FileInfo, error) { return os.Stat(p) }
-	osGetenvFunc = func(k string) string              { return os.Getenv(k) }
+	osStatFunc   = func(p string) (os.FileInfo, error) { return os.Stat(p) }
+	osGetenvFunc = func(k string) string { return os.Getenv(k) }
 )
 
 // Pool wraps pgxpool.Pool with daemon-specific helpers.
@@ -205,9 +205,9 @@ func (p *Pool) Schema() string {
 type PoolMetadata struct {
 	PoolID         int64
 	MetaURL        string
-	MetaHash       []byte     // 32 bytes (Blake2b-256 or zeros if HashNone)
-	MetaJSON       []byte     // raw json.Marshal output
-	MetaBytes      []byte     // raw response body
+	MetaHash       []byte // 32 bytes (Blake2b-256 or zeros if HashNone)
+	MetaJSON       []byte // raw json.Marshal output
+	MetaBytes      []byte // raw response body
 	LastPolled     time.Time
 	LastPoolUpdate int64
 	IsValid        bool

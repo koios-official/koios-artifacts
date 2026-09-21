@@ -12,16 +12,16 @@ import (
 // TestValidateSuccess covers the happy path.
 func TestValidateSuccess(t *testing.T) {
 	cfg := ValidationConfig{
-		MinBodyBytes:          16,
-		MaxBodyBytes:          1024,
-		AllowedContentTypes:   []string{"application/json"},
+		MinBodyBytes:           16,
+		MaxBodyBytes:           1024,
+		AllowedContentTypes:    []string{"application/json"},
 		AllowTextHTMLWithBrace: true,
 		JSON: JSONValidationConfig{
-			RequiredFields: []string{"name", "ticker"},
-			MaxDepth:       4,
-			MaxStringLength: 1024,
+			RequiredFields:   []string{"name", "ticker"},
+			MaxDepth:         4,
+			MaxStringLength:  1024,
 			MaxKeysPerObject: 32,
-			MaxArrayLength: 32,
+			MaxArrayLength:   32,
 		},
 		Hash: HashValidationConfig{Algorithm: "blake2b-256"},
 	}
@@ -68,7 +68,7 @@ func TestValidateSizeLow(t *testing.T) {
 	cfg := ValidationConfig{
 		MinBodyBytes: 100, MaxBodyBytes: 1024,
 		AllowedContentTypes: []string{"application/json"},
-		Hash:                 HashValidationConfig{Algorithm: "blake2b-256"},
+		Hash:                HashValidationConfig{Algorithm: "blake2b-256"},
 	}
 	_, err := Validate([]byte(`{}`), "application/json", nil, cfg)
 	if err == nil {
@@ -166,7 +166,7 @@ func TestHashCorrect(t *testing.T) {
 	cfg := ValidationConfig{
 		MinBodyBytes: 1, MaxBodyBytes: 4096,
 		AllowedContentTypes: []string{"application/json"},
-		JSON: JSONValidationConfig{MaxDepth: 4, MaxStringLength: 1024, MaxKeysPerObject: 32, MaxArrayLength: 32},
+		JSON:                JSONValidationConfig{MaxDepth: 4, MaxStringLength: 1024, MaxKeysPerObject: 32, MaxArrayLength: 32},
 		Hash:                HashValidationConfig{Algorithm: "blake2b-256"},
 	}
 	res, err := Validate(body, "application/json", want, cfg)
@@ -231,11 +231,11 @@ func TestHashNoneReturnsZeros(t *testing.T) {
 // tests that aren't exercising the JSON-shape validators.
 func noLimitJSONConfig() JSONValidationConfig {
 	return JSONValidationConfig{
-		MaxDepth:           32,
-		MaxStringLength:    65536,
-		MaxKeysPerObject:   256,
-		MaxArrayLength:     1024,
-		RequiredFields:     []string{},
+		MaxDepth:              32,
+		MaxStringLength:       65536,
+		MaxKeysPerObject:      256,
+		MaxArrayLength:        1024,
+		RequiredFields:        []string{},
 		AllowAdditionalFields: true,
 	}
 }

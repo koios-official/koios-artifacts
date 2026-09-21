@@ -34,13 +34,13 @@ type Config struct {
 
 // Server is the health HTTP server.
 type Server struct {
-	cfg     Config
-	logger  *slog.Logger
-	srv     *http.Server
-	addr    string
-	lastDB  atomic.Int64 // unix nano of last successful DB ping
-	pingFn  atomic.Pointer[PingFunc]
-	listen  net.Listener
+	cfg    Config
+	logger *slog.Logger
+	srv    *http.Server
+	addr   string
+	lastDB atomic.Int64 // unix nano of last successful DB ping
+	pingFn atomic.Pointer[PingFunc]
+	listen net.Listener
 }
 
 // NewServer constructs a Server but does not start it. Call Start to bind.
@@ -149,8 +149,8 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		if err := (*pingFn)(ctx); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable,
 				map[string]any{
-					"status":               "degraded",
-					"reason":               "db_unreachable",
+					"status":                "degraded",
+					"reason":                "db_unreachable",
 					"last_ping_age_seconds": int(age.Seconds()),
 				})
 			return

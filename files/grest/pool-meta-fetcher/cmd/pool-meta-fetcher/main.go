@@ -91,11 +91,11 @@ func main() {
 	// DB pool.
 	poolCtx, poolCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	pg, err := storage.NewPool(poolCtx, cfg.DatabaseURL, storage.PoolOptions{
-		Schema:          cfg.SchemaName,
-		MaxConns:        cfg.Database.PoolMaxConns,
-		MinConns:        cfg.Database.PoolMinConns,
-		MaxConnLifetime: cfg.Database.PoolMaxConnLifetime,
-		MaxConnIdleTime: cfg.Database.PoolMaxConnIdleTime,
+		Schema:           cfg.SchemaName,
+		MaxConns:         cfg.Database.PoolMaxConns,
+		MinConns:         cfg.Database.PoolMinConns,
+		MaxConnLifetime:  cfg.Database.PoolMaxConnLifetime,
+		MaxConnIdleTime:  cfg.Database.PoolMaxConnIdleTime,
 		StatementTimeout: time.Duration(cfg.Database.StatementTimeoutMs) * time.Millisecond,
 		ApplicationName:  "koios-pool-meta-fetcher",
 	})
@@ -153,11 +153,11 @@ func main() {
 		AllowedContentTypes:    cfg.Fetch.Validation.AllowedContentTypes,
 		AllowTextHTMLWithBrace: cfg.Fetch.Validation.AllowTextHTMLWithBrace,
 		JSON: fetcher.JSONValidationConfig{
-			RequiredFields:       cfg.Fetch.Validation.JSON.RequiredFields,
-			MaxDepth:             cfg.Fetch.Validation.JSON.MaxDepth,
-			MaxStringLength:      cfg.Fetch.Validation.JSON.MaxStringLength,
-			MaxKeysPerObject:     cfg.Fetch.Validation.JSON.MaxKeysPerObject,
-			MaxArrayLength:       cfg.Fetch.Validation.JSON.MaxArrayLength,
+			RequiredFields:        cfg.Fetch.Validation.JSON.RequiredFields,
+			MaxDepth:              cfg.Fetch.Validation.JSON.MaxDepth,
+			MaxStringLength:       cfg.Fetch.Validation.JSON.MaxStringLength,
+			MaxKeysPerObject:      cfg.Fetch.Validation.JSON.MaxKeysPerObject,
+			MaxArrayLength:        cfg.Fetch.Validation.JSON.MaxArrayLength,
 			AllowAdditionalFields: cfg.Fetch.Validation.JSON.AllowAdditionalFields,
 		},
 		Hash: fetcher.HashValidationConfig{

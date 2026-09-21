@@ -30,20 +30,20 @@ func (e *ValidationError) Error() string {
 // that validators need. Kept separate so validators don't import the config
 // package (which would create a cycle with main).
 type ValidationConfig struct {
-	MinBodyBytes             int
-	MaxBodyBytes             int
-	AllowedContentTypes      []string
-	AllowTextHTMLWithBrace   bool
-	JSON                     JSONValidationConfig
-	Hash                     HashValidationConfig
+	MinBodyBytes           int
+	MaxBodyBytes           int
+	AllowedContentTypes    []string
+	AllowTextHTMLWithBrace bool
+	JSON                   JSONValidationConfig
+	Hash                   HashValidationConfig
 }
 
 type JSONValidationConfig struct {
-	RequiredFields      []string
-	MaxDepth            int
-	MaxStringLength     int
-	MaxKeysPerObject    int
-	MaxArrayLength      int
+	RequiredFields        []string
+	MaxDepth              int
+	MaxStringLength       int
+	MaxKeysPerObject      int
+	MaxArrayLength        int
 	AllowAdditionalFields bool
 }
 

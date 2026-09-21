@@ -6,7 +6,7 @@
 // §fetch-private-ip-policy):
 //
 //   - block        (default): deny all private/loopback/link-local/ULA IPs;
-//                              per-pool exemptions via allow_list.
+//     per-pool exemptions via allow_list.
 //   - allow_list:                like block, but pool IDs in allow_list are exempt.
 //   - allow_all:                 permit everything (operator override; logged at startup).
 //
