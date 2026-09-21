@@ -10,10 +10,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/ipfilter"
+	"github.com/cardano-community/koios-artifacts/pool-meta-fetcher/internal/storage"
 )
 
 // WorkItem is the canonical input to a fetch attempt. It is the same as
@@ -57,6 +59,16 @@ type PoolFetcher struct {
 	mu       sync.Mutex
 	retries  map[int64]uint // pool_id -> consecutive failure count
 	mismatch map[int64]bool // pool_id -> hash_mismatch already logged this cycle
+
+	// Errors is an optional sink for failed fetches. When set, every failed
+	// attempt is persisted to grest.pool_offchain_fetch_error so operators
+	// can answer "why is this pool missing?" without scraping logs.
+	Errors ErrorSink
+}
+
+// ErrorSink persists a single failed fetch. Implemented by storage.Pool.
+type ErrorSink interface {
+	InsertFetchError(ctx context.Context, e storage.FetchError, bodyPreviewBytes int) error
 }
 
 // SetUserAgent overrides the default "koios-pool-meta-fetcher/dev" User-Agent.
@@ -122,7 +134,9 @@ func (p *PoolFetcher) Fetch(ctx context.Context, w WorkItem) *Result {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.URL, nil)
 	if err != nil {
-		return p.record(w, &Result{Err: fmt.Errorf("invalid url: %w", err), Duration: time.Since(start)})
+		r := &Result{Err: fmt.Errorf("invalid url: %w", err), Duration: time.Since(start)}
+		p.persistError(ctx, w, r, nil, "invalid_url", err.Error())
+		return p.record(w, r)
 	}
 	req.Header.Set("User-Agent", p.UserAgent())
 	req.Header.Set("Accept", "application/json, application/ld+json, text/plain;q=0.9, */*;q=0.1")
@@ -135,8 +149,10 @@ func (p *PoolFetcher) Fetch(ctx context.Context, w WorkItem) *Result {
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		httpResult.Err = fmt.Errorf("http do: %w", err)
+		category := classifyTransportCategory(err)
+		httpResult.Err = p.classifyTransportErr(err)
 		httpResult.Duration = time.Since(start)
+		p.persistError(ctx, w, httpResult, nil, category, err.Error())
 		return p.record(w, httpResult)
 	}
 	defer resp.Body.Close()
@@ -151,6 +167,7 @@ func (p *PoolFetcher) Fetch(ctx context.Context, w WorkItem) *Result {
 	if err != nil {
 		httpResult.Err = fmt.Errorf("read body: %w", err)
 		httpResult.Duration = time.Since(start)
+		p.persistError(ctx, w, httpResult, nil, "read_body", err.Error())
 		return p.record(w, httpResult)
 	}
 	httpResult.BytesRead = len(body)
@@ -158,13 +175,15 @@ func (p *PoolFetcher) Fetch(ctx context.Context, w WorkItem) *Result {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		httpResult.Err = fmt.Errorf("status %d", resp.StatusCode)
 		httpResult.Duration = time.Since(start)
+		p.persistError(ctx, w, httpResult, body, "http_status", fmt.Sprintf("HTTP %d %s", resp.StatusCode, resp.Status))
 		return p.record(w, httpResult)
 	}
 
-	validated, err := Validate(body, httpResult.ContentType, w.OnChainHash, p.cfg)
-	if err != nil {
-		httpResult.Err = err
+	validated, verr := Validate(body, httpResult.ContentType, w.OnChainHash, p.cfg)
+	if verr != nil {
+		httpResult.Err = verr
 		httpResult.Duration = time.Since(start)
+		p.persistError(ctx, w, httpResult, body, classifyValidatorErr(verr), verr.Error())
 		return p.record(w, httpResult)
 	}
 
@@ -179,9 +198,115 @@ func (p *PoolFetcher) Fetch(ctx context.Context, w WorkItem) *Result {
 			slog.String("declared_hash", fmt.Sprintf("%x", w.OnChainHash)),
 			slog.String("actual_hash", fmt.Sprintf("%x", validated.MetaHash)),
 		)
+		// Don't persist hash_mismatch — per spec it's informational, not a
+		// failure. Operators consult the live row instead.
 	}
 
 	return p.record(w, httpResult)
+}
+
+// persistError writes a row to <schema>.pool_offchain_fetch_error when the
+// Errors sink is set. Failures to persist (DB unreachable mid-cycle) are
+// logged at warn but do not affect the fetch result.
+func (p *PoolFetcher) persistError(ctx context.Context, w WorkItem, r *Result, body []byte, class string, msg string) {
+	if p.Errors == nil {
+		return
+	}
+	e := storage.FetchError{
+		PoolID:         w.PoolID,
+		PMRID:          w.PoolUpdateID,
+		MetaURL:        w.URL,
+		HTTPStatusCode: r.HTTPStatusCode,
+		ErrorClass:     class,
+		ErrorMessage:   truncate(msg, 1024),
+		ResponseBody:   body,
+	}
+	if e.ErrorMessage == "" && r.Err != nil {
+		e.ErrorMessage = truncate(r.Err.Error(), 1024)
+	}
+	// Best-effort; don't kill the cycle over a write error. 4 KiB preview
+	// is enough to diagnose 99% of "weird JSON / HTML" cases.
+	if err := p.Errors.InsertFetchError(ctx, e, 4096); err != nil {
+		p.logger.Warn("persist_fetch_error_failed",
+			slog.Int64("pool_id", w.PoolID),
+			slog.String("err", err.Error()),
+		)
+	}
+}
+
+// classifyTransportErr turns a net error from client.Do into a tagged
+// error wrapping the original. The category is the prefix before the colon.
+func (p *PoolFetcher) classifyTransportErr(err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "context deadline exceeded"):
+		return fmt.Errorf("timeout: %w", err)
+	case strings.Contains(msg, "no such host"):
+		return fmt.Errorf("dns_failure: %w", err)
+	case strings.Contains(msg, "connection refused"):
+		return fmt.Errorf("connection_refused: %w", err)
+	case strings.Contains(msg, "connection reset"):
+		return fmt.Errorf("connection_reset: %w", err)
+	case strings.Contains(msg, "tls: "):
+		return fmt.Errorf("tls_failure: %w", err)
+	case strings.Contains(msg, "ip_blocked"):
+		return fmt.Errorf("ip_blocked: %w", err)
+	default:
+		return fmt.Errorf("transport_other: %w", err)
+	}
+}
+
+// classifyTransportCategory returns just the category string ("timeout",
+// "dns_failure", etc.) suitable for the error_class column.
+func classifyTransportCategory(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "context deadline exceeded"):
+		return "timeout"
+	case strings.Contains(msg, "no such host"):
+		return "dns_failure"
+	case strings.Contains(msg, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(msg, "connection reset"):
+		return "connection_reset"
+	case strings.Contains(msg, "tls: "):
+		return "tls_failure"
+	case strings.Contains(msg, "ip_blocked"):
+		return "ip_blocked"
+	default:
+		return "transport_other"
+	}
+}
+
+func (p *PoolFetcher) transportErrDetail(err error) string {
+	return truncate(err.Error(), 1024)
+}
+
+func classifyValidatorErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ve *ValidationError
+	if errors.As(err, &ve) {
+		switch ve.Field {
+		case "size":
+			return "size_violation"
+		case "content_type":
+			return "content_type_rejected"
+		case "json":
+			return "json_validation"
+		default:
+			return "validator_" + ve.Field
+		}
+	}
+	return "validator_other"
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...[truncated]"
 }
 
 // record centralises retry-counter bookkeeping. On success the counter resets;

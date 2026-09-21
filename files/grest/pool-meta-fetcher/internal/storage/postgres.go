@@ -117,11 +117,21 @@ func (p *Pool) DiscoverWorkItems(
 	ctx context.Context,
 	batchSize int,
 	pollStaleAfter time.Duration,
+	failedRetryAfter time.Duration,
 	allowList, denyList []string,
 ) ([]WorkItem, error) {
-	// For Phase 2 we ignore allowList/denyList — wired in Phase 3.
-	// (The fetcher package will apply them in-memory.)
 	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
+	// Dual-cadence retry: successful pools use pollStaleAfter; pools whose
+	// most-recent attempt was a failure use failedRetryAfter. This means
+	// "the cron pulls every X minutes, but the cycle only re-fetches failed
+	// pools on the short cadence." Capture stale intervals as integers.
+	var pollSecs, retrySecs int64 = int64(pollStaleAfter.Seconds()), int64(failedRetryAfter.Seconds())
+	if pollSecs <= 0 {
+		pollSecs = 60
+	}
+	if retrySecs <= 0 {
+		retrySecs = 60
+	}
 	q := fmt.Sprintf(`
 WITH latest_pu AS (
   SELECT DISTINCT ON (pu.hash_id)
@@ -147,15 +157,21 @@ WHERE pmr.url IS NOT NULL
   AND (
        pom.pool_id IS NULL
     OR pom.last_pool_update_id IS DISTINCT FROM lp.pu_id
-    OR pom.last_polled < now() - ($1::bigint * INTERVAL '1 second')
+    -- last attempt was success AND it's old enough (long poll cycle)
+    OR (pom.last_succeeded_polled_at >= COALESCE(pom.last_failed_polled_at, pom.last_succeeded_polled_at)
+        AND pom.last_succeeded_polled_at < now() - make_interval(secs => $1::bigint))
+    -- last attempt was failure AND it's been long enough (short retry cycle)
+    OR (pom.last_failed_polled_at IS NOT NULL
+        AND pom.last_failed_polled_at > pom.last_succeeded_polled_at
+        AND pom.last_failed_polled_at < now() - make_interval(secs => $2::bigint))
   )
-LIMIT $2;
+LIMIT $3;
 `, schemaIdent)
 	var staleSecs int64 = int64(pollStaleAfter.Seconds())
 	if staleSecs <= 0 {
 		staleSecs = 1
 	}
-	rows, err := p.Query(ctx, q, staleSecs, batchSize)
+	rows, err := p.Query(ctx, q, pollSecs, retrySecs, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("discover work: %w", err)
 	}
@@ -267,23 +283,29 @@ func (p *Pool) UpsertBatch(ctx context.Context, batch []PoolMetadata) error {
 
 	// Merge: insert or update on (pool_id). All non-key columns refresh
 	// from the freshly-fetched row (this is the "current view" cache).
+	// Note: last_succeeded_polled_at is bumped to match last_polled on every
+	// successful upsert; last_failed_polled_at is left as-is (we only ever
+	// touch it from the failure path via MarkPoolAttempted).
 	mergeSQL := fmt.Sprintf(`
 INSERT INTO %s (
   pool_id, meta_url, meta_hash, meta_json, meta_bytes,
-  last_polled, last_pool_update_id, is_valid
+  last_polled, last_pool_update_id, is_valid,
+  last_succeeded_polled_at
 )
 SELECT
   pool_id, meta_url, meta_hash, meta_json, meta_bytes,
-  last_polled, last_pool_update_id, is_valid
+  last_polled, last_pool_update_id, is_valid,
+  last_polled
 FROM %s
 ON CONFLICT (pool_id) DO UPDATE SET
-  meta_url            = EXCLUDED.meta_url,
-  meta_hash           = EXCLUDED.meta_hash,
-  meta_json           = EXCLUDED.meta_json,
-  meta_bytes          = EXCLUDED.meta_bytes,
-  last_polled         = EXCLUDED.last_polled,
-  last_pool_update_id = EXCLUDED.last_pool_update_id,
-  is_valid            = EXCLUDED.is_valid;
+  meta_url                   = EXCLUDED.meta_url,
+  meta_hash                  = EXCLUDED.meta_hash,
+  meta_json                  = EXCLUDED.meta_json,
+  meta_bytes                 = EXCLUDED.meta_bytes,
+  last_polled                = EXCLUDED.last_polled,
+  last_pool_update_id        = EXCLUDED.last_pool_update_id,
+  is_valid                   = EXCLUDED.is_valid,
+  last_succeeded_polled_at   = EXCLUDED.last_succeeded_polled_at;
 `, tableIdent, stageIdent)
 	if _, err := tx.Exec(ctx, mergeSQL); err != nil {
 		return fmt.Errorf("merge into %s: %w", tableIdent, err)
@@ -296,10 +318,86 @@ ON CONFLICT (pool_id) DO UPDATE SET
 	return nil
 }
 
+// MarkPoolAttempted records that we attempted (succeeded or failed) for a
+// given (pool_id, last_pool_update_id). For successful attempts, the upsert
+// path handles both timestamp updates; this method only deals with failures
+// to avoid round-tripping through the upsert batch.
+//
+// Failure-mode behaviour: bumps last_polled and last_failed_polled_at to now,
+// leaves last_succeeded_polled_at at its prior value (so the discovery query
+// sees the pool as "currently failing" and routes it through the retry cycle).
+func (p *Pool) MarkPoolAttempted(ctx context.Context, poolID, lastPoolUpdateID int64, succeeded bool) error {
+	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
+	tableIdent := pgx.Identifier{p.Schema(), "pool_offchain_metadata"}.Sanitize()
+	if succeeded {
+		// Successful path goes through the normal UPSERT (which already
+		// updates last_succeeded_polled_at). This method is a no-op for
+		// success so callers can use it uniformly.
+		return nil
+	}
+	sql := fmt.Sprintf(`
+UPDATE %s
+SET last_polled = now(),
+    last_failed_polled_at = now()
+WHERE pool_id = $1 AND last_pool_update_id = $2
+`, tableIdent)
+	_, err := p.Exec(ctx, sql, poolID, lastPoolUpdateID)
+	_ = schemaIdent
+	return err
+}
+
 // AdjustMetaBytesCheckConstraint (de)tightens the DB-side CHECK on meta_bytes
 // to match the operator-configured max_body_bytes. Called at startup.
 //
 // See openspec/specs/pool-offchain-metadata-cache/spec.md §storage-budget.
+
+// InsertFetchError writes a single error row to <schema>.pool_offchain_fetch_error.
+// Body is truncated to bodyPreviewBytes (zero means "don't store the body").
+// Used by the fetcher to record every failed poll-attempt so operators can
+// answer "why is this pool missing?" without scraping logs.
+func (p *Pool) InsertFetchError(ctx context.Context, e FetchError, bodyPreviewBytes int) error {
+	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
+	if bodyPreviewBytes < 0 {
+		bodyPreviewBytes = 0
+	}
+	preview := e.ResponseBody
+	if bodyPreviewBytes > 0 && len(preview) > bodyPreviewBytes {
+		preview = preview[:bodyPreviewBytes]
+	}
+	sql := fmt.Sprintf(`
+INSERT INTO %s.pool_offchain_fetch_error
+  (pool_id, pmr_id, meta_url, http_status_code, error_class, error_message, response_preview)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`, schemaIdent)
+	var status *int
+	if e.HTTPStatusCode != 0 {
+		s := e.HTTPStatusCode
+		status = &s
+	}
+	_, err := p.Exec(ctx, sql,
+		e.PoolID,
+		e.PMRID,
+		e.MetaURL,
+		status,
+		e.ErrorClass,
+		e.ErrorMessage,
+		preview,
+	)
+	return err
+}
+
+// FetchError is the payload passed to InsertFetchError. Fields map 1:1 to
+// <schema>.pool_offchain_fetch_error columns.
+type FetchError struct {
+	PoolID         int64
+	PMRID          int64
+	MetaURL        string
+	HTTPStatusCode int    // 0 = no HTTP response (DNS / TLS / IP-block / etc.)
+	ErrorClass     string // stable machine-readable category
+	ErrorMessage   string // human-readable detail
+	ResponseBody   []byte // truncated server response (first ~4 KiB)
+}
+
 func (p *Pool) AdjustMetaBytesCheckConstraint(ctx context.Context, maxBytes int) error {
 	if maxBytes <= 0 || maxBytes > 5242880 {
 		return fmt.Errorf("maxBytes out of range (1..5242880): %d", maxBytes)

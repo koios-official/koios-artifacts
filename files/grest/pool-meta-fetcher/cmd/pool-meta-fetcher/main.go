@@ -166,6 +166,7 @@ func main() {
 		},
 	}, logger)
 	pf.SetUserAgent(cfg.Fetch.HTTP.UserAgent)
+	pf.Errors = pg // persist failed fetches to grest.pool_offchain_fetch_error
 
 	// Cycle driver.
 	f := fetcher.New(cfg, pg, pf, logger)

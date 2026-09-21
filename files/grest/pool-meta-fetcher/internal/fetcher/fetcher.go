@@ -21,8 +21,9 @@ import (
 // DBStore is the storage surface the fetcher needs. It is implemented by
 // *storage.Pool in production and by fakes in tests.
 type DBStore interface {
-	DiscoverWorkItems(ctx context.Context, batchSize int, pollStaleAfter time.Duration, allowList, denyList []string) ([]storage.WorkItem, error)
+	DiscoverWorkItems(ctx context.Context, batchSize int, pollStaleAfter, failedRetryAfter time.Duration, allowList, denyList []string) ([]storage.WorkItem, error)
 	UpsertBatch(ctx context.Context, batch []storage.PoolMetadata) error
+	MarkPoolAttempted(ctx context.Context, poolID, lastPoolUpdateID int64, succeeded bool) error
 }
 
 // Fetcher is the cycle driver.
@@ -88,6 +89,7 @@ func (f *Fetcher) runCycle(ctx context.Context) {
 		cycleCtx,
 		f.cfg.Fetch.WorkQueue.BatchSize,
 		f.cfg.PollInterval(),
+		f.cfg.FailedPoolRetry(),
 		f.cfg.Fetch.WorkQueue.PoolIDAllowList,
 		f.cfg.Fetch.WorkQueue.PoolIDDenyList,
 	)
@@ -112,7 +114,31 @@ func (f *Fetcher) runCycle(ctx context.Context) {
 		}
 	}
 
-	f.recordStats(start, skipped, len(upsertBatch), len(work)-len(upsertBatch))
+	// Persist per-pool failure marker so the next cycle knows which pools
+	// to re-attempt at the short retry cadence.
+	failedCount := len(work) - len(upsertBatch)
+	if failedCount > 0 {
+		f.markFailedAttempts(cycleCtx, results)
+	}
+
+	f.recordStats(start, skipped, len(upsertBatch), failedCount)
+}
+
+// markFailedAttempts calls MarkPoolAttempted(false) for each result that
+// did not succeed; best-effort — failures here are logged but don't abort
+// the cycle.
+func (f *Fetcher) markFailedAttempts(ctx context.Context, results []Result) {
+	for _, r := range results {
+		if r.Succeeded() {
+			continue
+		}
+		if err := f.db.MarkPoolAttempted(ctx, r.PoolID, r.PoolUpdateID, false); err != nil {
+			f.log.Warn("mark_failed_attempt_failed",
+				slog.Int64("pool_id", r.PoolID),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
 }
 
 // intervalTimeout bounds a single cycle to roughly one poll interval.

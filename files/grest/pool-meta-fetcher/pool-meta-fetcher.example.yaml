@@ -8,8 +8,9 @@ schema_name: grest  # override to e.g. 'gresttmp' for non-production testing
 fetch:
   enabled: true
   poll:
-    poll_interval_seconds: 300
+    poll_interval_seconds: 432000   # 5 days; matches Cardano mainnet epoch cadence
     min_poll_interval_seconds: 60
+    failed_pool_retry_seconds: 60   # failed pools re-attempted on this faster cadence
   work_queue:
     concurrency: 16
     batch_size: 100

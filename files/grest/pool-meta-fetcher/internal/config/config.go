@@ -90,8 +90,9 @@ type FetchConfig struct {
 }
 
 type PollConfig struct {
-	PollIntervalSeconds  int `yaml:"poll_interval_seconds"`
-	MinPollIntervalSecs  int `yaml:"min_poll_interval_seconds"`
+	PollIntervalSeconds       int `yaml:"poll_interval_seconds"`
+	MinPollIntervalSecs       int `yaml:"min_poll_interval_seconds"`
+	FailedPoolRetrySeconds    int `yaml:"failed_pool_retry_seconds"`
 }
 
 type WorkQueueConfig struct {
@@ -265,8 +266,9 @@ func defaults() *Config {
 		Fetch: FetchConfig{
 			Enabled: true,
 			Poll: PollConfig{
-				PollIntervalSeconds: 300,
-				MinPollIntervalSecs: 60,
+				PollIntervalSeconds:    432000, // 5 days; matches Cardano mainnet epoch cadence
+				MinPollIntervalSecs:    60,
+				FailedPoolRetrySeconds: 60, // failed pools get a fast retry cycle regardless
 			},
 			WorkQueue: WorkQueueConfig{
 				Concurrency:         16,
@@ -355,6 +357,11 @@ func defaults() *Config {
 // PollInterval returns poll_interval_seconds as a Duration.
 func (c *Config) PollInterval() time.Duration {
 	return time.Duration(c.Fetch.Poll.PollIntervalSeconds) * time.Second
+}
+
+// FailedPoolRetry returns failed_pool_retry_seconds as a Duration.
+func (c *Config) FailedPoolRetry() time.Duration {
+	return time.Duration(c.Fetch.Poll.FailedPoolRetrySeconds) * time.Second
 }
 
 // MinPollInterval returns min_poll_interval_seconds as a Duration.
@@ -489,6 +496,24 @@ var configRules = []configRule{
 		if m > p {
 			return &ValidationError{Field: "fetch.poll.min_poll_interval_seconds",
 				Value: m, Reason: fmt.Sprintf("must be <= poll_interval_seconds (%d)", p)}
+}
+	return nil
+	},
+	// 4a — failed_pool_retry must be > 0 and <= poll_interval (otherwise semantics invert)
+	func(c *Config) error {
+		fpr := c.Fetch.Poll.FailedPoolRetrySeconds
+		pi := c.Fetch.Poll.PollIntervalSeconds
+		if fpr <= 0 {
+			return &ValidationError{Field: "fetch.poll.failed_pool_retry_seconds",
+				Value: fpr, Reason: "must be > 0"}
+		}
+		if pi <= 0 {
+			return &ValidationError{Field: "fetch.poll.poll_interval_seconds",
+				Value: pi, Reason: "must be > 0"}
+		}
+		if fpr > pi {
+			return &ValidationError{Field: "fetch.poll.failed_pool_retry_seconds",
+				Value: fpr, Reason: fmt.Sprintf("must be <= poll_interval_seconds (%d)", pi)}
 		}
 		return nil
 	},

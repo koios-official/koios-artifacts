@@ -7,8 +7,9 @@ schema_name: gresttmp_full
 fetch:
   enabled: true
   poll:
-    poll_interval_seconds: 60
+    poll_interval_seconds: 60       # cycle cadence (this test runs short intervals)
     min_poll_interval_seconds: 30
+    failed_pool_retry_seconds: 30   # failed pools get retried this often
   work_queue:
     concurrency: 32          # fan out against preview pool URLs
     batch_size: 1500         # overshoot 1264 pools so first cycle covers all
@@ -26,7 +27,7 @@ fetch:
     tls_min_version: "1.2"
     http2: true
   validation:
-    min_body_bytes: 16
+    min_body_bytes: 1         # match db-sync's tolerance for stub JSON
     max_body_bytes: 65536
     allowed_content_types: ["application/json","application/ld+json","text/plain"]
     allow_text_html_with_brace: true
@@ -44,7 +45,7 @@ fetch:
   private_ip_policy: block
   private_ip_allow_list: []
   retry:
-    max_attempts: 3
+    max_attempts: 5         # give transient errors more chances
     backoff_initial_seconds: 5
     backoff_max_seconds: 60
     backoff_multiplier_seconds: 5
