@@ -320,6 +320,14 @@ func RunMigrations(ctx context.Context, dbURL, schema string) error {
 		return err
 	}
 
+	// Bootstrap: ensure the schema exists BEFORE constructing the migrator.
+	// Without this, golang-migrate's CREATE TABLE schema_migrations fails
+	// because the target schema does not yet exist (the schema is normally
+	// created by migration 0001). The CREATE is idempotent.
+	if err := ensureSchema(dbURL, schema); err != nil {
+		return fmt.Errorf("ensure schema: %w", err)
+	}
+
 	srcFS, dir, err := buildMigrationsSource(schema)
 	if err != nil {
 		return fmt.Errorf("build migration source: %w", err)
@@ -332,7 +340,12 @@ func RunMigrations(ctx context.Context, dbURL, schema string) error {
 	if err != nil {
 		return fmt.Errorf("parse db url: %w", err)
 	}
-	driver, err := migratepgx.WithInstance(stdlib.OpenDB(*cfg.ConnConfig), &migratepgx.Config{})
+	driver, err := migratepgx.WithInstance(stdlib.OpenDB(*cfg.ConnConfig), &migratepgx.Config{
+		// Pin the schema_migrations bookkeeping table into the same schema as
+		// the daemon's table (no default-search_path / no creation in public).
+		MigrationsTable: "schema_migrations",
+		SchemaName:      schema,
+	})
 	if err != nil {
 		return fmt.Errorf("create migrate driver: %w", err)
 	}
@@ -349,6 +362,24 @@ func RunMigrations(ctx context.Context, dbURL, schema string) error {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
+}
+
+// ensureSchema creates the configured schema if it doesn't exist. Safe to
+// call repeatedly (uses IF NOT EXISTS).
+func ensureSchema(dbURL, schema string) error {
+	cfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		return err
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	sql := fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s;`,
+		pgx.Identifier{schema}.Sanitize())
+	_, err = pool.Exec(context.Background(), sql)
+	return err
 }
 
 // buildMigrationsSource resolves the migration source. Returns (fs.FS, tmpdir).

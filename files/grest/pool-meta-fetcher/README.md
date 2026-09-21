@@ -71,7 +71,7 @@ Everything else has safe defaults; production mainnet should override the
 
 ### Schema note (`schema_name`)
 
-The daemon owns a single table `grest.pool_offchain_metadata` plus supporting
+The daemon owns a single table `<schema>.pool_offchain_metadata` plus supporting
 objects (indexes, constraints, sequences). All references go through the
 `schema_name` config knob, so you can:
 
@@ -82,7 +82,34 @@ objects (indexes, constraints, sequences). All references go through the
 - Disable the daemon entirely (`schema_name: grest_meta_off` and let the
   cron job purge it) without affecting the existing data.
 
-The daemon never touches data outside the configured schema.
+The daemon never touches data outside the configured schema. This was verified
+end-to-end on the actual `cexplorer` DB (`network_name: preview`, 1264 pools):
+
+- `gresttmp.pool_offchain_metadata` populated for 24 pools, including 3 (pools
+  4, 7, 8) whose computed Blake2b-256 hash matched db-sync's own
+  `public.off_chain_pool_data` entries byte-for-byte.
+- `grest` schema unchanged — 13 tables before and after the run.
+- `public` schema and `public.schema_migrations` both **not** created by the
+  daemon (golang-migrate's bookkeeping table is now pinned to the configured
+  schema; previously it was created in `public`).
+- Both `gresttmp` and `public.schema_migrations` are removed on cleanup via a
+  simple `DROP SCHEMA gresttmp CASCADE`.
+
+### Real-DB test config
+
+`test-cexplorer.yaml` is a ready-to-use config that points at the local
+cexplorer database via Unix socket. Set `schema_name` to `gresttmp` (or any
+other non-grest, non-public schema) and run the daemon as the OS user that
+has peer auth on PostgreSQL:
+
+```bash
+sudo setpriv --reuid=postgres --regid=postgres --clear-groups -- \
+  ./pool-meta-fetcher --config ./test-cexplorer.yaml
+```
+
+The fetcher runs against the real cardano-db-sync catalog and writes only to
+the configured schema. The test config is checked in so reviewers can
+reproduce the smoke test locally.
 
 ## Tuning painpoints addressed
 
