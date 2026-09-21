@@ -67,6 +67,7 @@ func main() {
 		ListenAddr:           cfg.Health.ListenAddr,
 		ListenPort:           cfg.Health.ListenPort,
 		ReadyzDBGraceSeconds: cfg.Health.ReadyzDBGraceSeconds,
+		ExposeDebugPools:     cfg.Fetch.WorkQueue.ExposeDebugEndpoint,
 	})
 	if err := hs.Start(); err != nil {
 		logger.Error("health_server_failed_to_start", slog.String("err", err.Error()))

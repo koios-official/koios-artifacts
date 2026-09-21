@@ -1,0 +1,68 @@
+# Complete-fetch smoke config — points at real cexplorer DB;
+# gresttmp_full schema (separate from earlier gresttmp runs).
+database_url: "host=/var/run/postgresql dbname=cexplorer user=postgres"
+network_name: preview
+schema_name: gresttmp_full
+
+fetch:
+  enabled: true
+  poll:
+    poll_interval_seconds: 60
+    min_poll_interval_seconds: 30
+  work_queue:
+    concurrency: 32          # fan out against preview pool URLs
+    batch_size: 1500         # overshoot 1264 pools so first cycle covers all
+    max_inflight: 64
+    write_batch_size: 100
+    pool_id_allow_list: []
+    pool_id_deny_list: []
+    expose_debug_endpoint: true
+  http:
+    timeout_seconds: 15
+    connect_timeout_seconds: 5
+    max_redirects: 3
+    user_agent: "koios-pool-meta-fetcher/full-fetch/1.0"
+    skip_tls_verify: false
+    tls_min_version: "1.2"
+    http2: true
+  validation:
+    min_body_bytes: 16
+    max_body_bytes: 65536
+    allowed_content_types: ["application/json","application/ld+json","text/plain"]
+    allow_text_html_with_brace: true
+    follow_cross_host_redirects: false
+    json:
+      required_fields: []    # CIP-6 not enforced on preview (some SPOs are lax)
+      max_depth: 8
+      max_string_length: 4096
+      max_keys_per_object: 32
+      max_array_length: 64
+      allow_additional_fields: true
+    hash:
+      algorithm: blake2b-256
+      log_mismatches: true
+  private_ip_policy: block
+  private_ip_allow_list: []
+  retry:
+    max_attempts: 3
+    backoff_initial_seconds: 5
+    backoff_max_seconds: 60
+    backoff_multiplier_seconds: 5
+  pools_overrides: []
+
+database:
+  pool_max_conns: 8
+  pool_min_conns: 2
+  pool_max_conn_lifetime: 30m
+  pool_max_conn_idle_time: 5m
+  statement_timeout_ms: 60000
+
+health:
+  listen_addr: "127.0.0.1"
+  listen_port: 18083
+  readyz_db_grace_seconds: 30
+
+logging:
+  level: info
+  format: json
+  add_source: false

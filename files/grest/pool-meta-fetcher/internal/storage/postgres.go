@@ -216,8 +216,10 @@ type PoolMetadata struct {
 }
 
 // UpsertBatch performs an UPSERT for a batch of PoolMetadata rows in one
-// transaction. pgx's CopyFrom is used for the write path because it is the
-// fastest path through the binary protocol.
+// transaction. The fastest path uses a temp staging table populated via
+// COPY and then INSERT ... ON CONFLICT to merge into the target — this gives
+// bulk-load throughput AND correct conflict resolution (a plain COPY FROM
+// would 23505 on duplicate pool_id).
 func (p *Pool) UpsertBatch(ctx context.Context, batch []PoolMetadata) error {
 	if len(batch) == 0 {
 		return nil
@@ -228,13 +230,20 @@ func (p *Pool) UpsertBatch(ctx context.Context, batch []PoolMetadata) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// ON CONFLICT (pool_id) DO UPDATE — cache is current-state, one row per pool.
-	const copyQ = `
-COPY grest.pool_offchain_metadata
-  (pool_id, meta_url, meta_hash, meta_json, meta_bytes, last_polled, last_pool_update_id, is_valid)
-FROM STDIN
-WITH (FORMAT text, DELIMITER E'\t', NULL '');
-`
+	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
+	tableIdent := pgx.Identifier{p.Schema(), "pool_offchain_metadata"}.Sanitize()
+	stageIdent := pgx.Identifier{"pmf_stage"}.Sanitize()
+
+	// Stage the batch into a temp table (LIKE target) and merge with ON
+	// CONFLICT. Concurrent per-cycle runs would NOT collide because the
+	// same target pool_id always replaces the prior row, but we still wrap
+	// the merge in a tx so partial failures roll back cleanly.
+	if _, err := tx.Exec(ctx, fmt.Sprintf(
+		`CREATE TEMP TABLE %s (LIKE %s INCLUDING DEFAULTS) ON COMMIT DROP;`,
+		stageIdent, tableIdent)); err != nil {
+		return fmt.Errorf("create stage: %w", err)
+	}
+
 	rows := make([][]any, 0, len(batch))
 	for _, m := range batch {
 		rows = append(rows, []any{
@@ -248,21 +257,42 @@ WITH (FORMAT text, DELIMITER E'\t', NULL '');
 			m.IsValid,
 		})
 	}
-	if _, err := tx.CopyFrom(ctx,
-		pgx.Identifier{p.Schema(), "pool_offchain_metadata"},
+	if _, err := tx.CopyFrom(ctx, pgx.Identifier{"pmf_stage"},
 		[]string{"pool_id", "meta_url", "meta_hash", "meta_json", "meta_bytes",
 			"last_polled", "last_pool_update_id", "is_valid"},
 		pgx.CopyFromRows(rows),
 	); err != nil {
-		// Fallback path: COPY is fastest but requires table ownership privileges
-		// in the connected role. If COPY fails with permission error, retry as
-		// INSERT ... ON CONFLICT via INSERT statement. Phase 3 will add the
-		// INSERT fallback if needed.
-		return fmt.Errorf("copy upsert (pool_meta_fetcher must own the table; did you forget to ALTER TABLE ... OWNER TO grest_owner?): %w", err)
+		return fmt.Errorf("copy into stage: %w", err)
 	}
+
+	// Merge: insert or update on (pool_id). All non-key columns refresh
+	// from the freshly-fetched row (this is the "current view" cache).
+	mergeSQL := fmt.Sprintf(`
+INSERT INTO %s (
+  pool_id, meta_url, meta_hash, meta_json, meta_bytes,
+  last_polled, last_pool_update_id, is_valid
+)
+SELECT
+  pool_id, meta_url, meta_hash, meta_json, meta_bytes,
+  last_polled, last_pool_update_id, is_valid
+FROM %s
+ON CONFLICT (pool_id) DO UPDATE SET
+  meta_url            = EXCLUDED.meta_url,
+  meta_hash           = EXCLUDED.meta_hash,
+  meta_json           = EXCLUDED.meta_json,
+  meta_bytes          = EXCLUDED.meta_bytes,
+  last_polled         = EXCLUDED.last_polled,
+  last_pool_update_id = EXCLUDED.last_pool_update_id,
+  is_valid            = EXCLUDED.is_valid;
+`, tableIdent, stageIdent)
+	if _, err := tx.Exec(ctx, mergeSQL); err != nil {
+		return fmt.Errorf("merge into %s: %w", tableIdent, err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit upsert tx: %w", err)
 	}
+	_ = schemaIdent
 	return nil
 }
 
