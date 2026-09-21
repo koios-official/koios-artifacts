@@ -3,6 +3,7 @@
 
 database_url: postgres://grest_owner:CHANGE_ME@localhost:5432/cexplorer
 network_name: mainnet
+schema_name: grest  # override to e.g. 'gresttmp' for non-production testing
 
 fetch:
   enabled: true

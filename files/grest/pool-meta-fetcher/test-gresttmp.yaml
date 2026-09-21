@@ -1,0 +1,69 @@
+database_url: postgres://tester:testpw@127.0.0.1:15432/pooltest?sslmode=disable
+network_name: preview
+schema_name: gresttmp
+
+fetch:
+  enabled: true
+  poll:
+    poll_interval_seconds: 600
+    min_poll_interval_seconds: 60
+  work_queue:
+    concurrency: 2
+    batch_size: 50
+    max_inflight: 4
+    write_batch_size: 50
+    pool_id_allow_list: []
+    pool_id_deny_list: []
+    expose_debug_endpoint: false
+  http:
+    timeout_seconds: 30
+    connect_timeout_seconds: 5
+    max_redirects: 3
+    user_agent: "koios-pool-meta-fetcher/test"
+    skip_tls_verify: false
+    tls_min_version: "1.2"
+    http2: true
+    extra_headers: {}
+  validation:
+    min_body_bytes: 16
+    max_body_bytes: 524288
+    allowed_content_types:
+      - "application/json"
+      - "text/plain"
+    allow_text_html_with_brace: true
+    follow_cross_host_redirects: false
+    json:
+      required_fields: []
+      max_depth: 8
+      max_string_length: 8192
+      max_keys_per_object: 32
+      max_array_length: 64
+    hash:
+      algorithm: blake2b-256
+      log_mismatches: true
+  private_ip_policy: block
+  private_ip_allow_list: []
+  retry:
+    max_attempts: 3
+    backoff_initial_seconds: 5
+    backoff_max_seconds: 60
+    backoff_multiplier_seconds: 5
+  pools_overrides: []
+  pools_overrides_match_style: exact
+
+database:
+  pool_max_conns: 4
+  pool_min_conns: 1
+  pool_max_conn_lifetime: 30m
+  pool_max_conn_idle_time: 5m
+  statement_timeout_ms: 30000
+
+health:
+  listen_addr: "127.0.0.1"
+  listen_port: 18081
+  readyz_db_grace_seconds: 30
+
+logging:
+  level: debug
+  format: text
+  add_source: true

@@ -64,9 +64,25 @@ Only two keys are required:
 ```yaml
 database_url: postgres://grest_owner:xxx@localhost:5432/cexplorer
 network_name: mainnet
+schema_name: grest         # default; override to 'gresttmp' for non-prod testing
 ```
 Everything else has safe defaults; production mainnet should override the
 `fetch.work_queue.concurrency`, `fetch.poll.*`, and `fetch.validation.*_bytes` knobs.
+
+### Schema note (`schema_name`)
+
+The daemon owns a single table `grest.pool_offchain_metadata` plus supporting
+objects (indexes, constraints, sequences). All references go through the
+`schema_name` config knob, so you can:
+
+- Run a **second** daemon against the same database with `schema_name:
+  gresttmp` for staging or test purposes.
+- Carve out a separate schema for a different net (e.g.,
+  `schema_name: grest_preprod`) without touching the live `grest` schema.
+- Disable the daemon entirely (`schema_name: grest_meta_off` and let the
+  cron job purge it) without affecting the existing data.
+
+The daemon never touches data outside the configured schema.
 
 ## Tuning painpoints addressed
 

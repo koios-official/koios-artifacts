@@ -110,13 +110,9 @@ func TestValidateTextHTMLBraceFallback(t *testing.T) {
 		MaxBodyBytes:           1024,
 		AllowedContentTypes:    []string{"application/json"},
 		AllowTextHTMLWithBrace: true,
+		JSON:                   noLimitJSONConfig(),
 	}
-	res, err := Validate([]byte(`{"a":1}`), "text/html", nil, ValidationConfig{
-		MinBodyBytes:           cfg.MinBodyBytes,
-		MaxBodyBytes:           cfg.MaxBodyBytes,
-		AllowedContentTypes:    cfg.AllowedContentTypes,
-		AllowTextHTMLWithBrace: true,
-	})
+	res, err := Validate([]byte(`{"a":1}`), "text/html", nil, cfg)
 	if err != nil {
 		t.Fatalf("text/html brace fallback should accept: %v", err)
 	}
@@ -197,6 +193,7 @@ func TestHashMismatchInformational(t *testing.T) {
 	cfg := ValidationConfig{
 		MinBodyBytes: 1, MaxBodyBytes: 4096,
 		AllowedContentTypes: []string{"application/json"},
+		JSON:                noLimitJSONConfig(),
 		Hash:                HashValidationConfig{Algorithm: "blake2b-256", LogMismatches: true},
 	}
 	res, err := Validate(body, "application/json", other, cfg)
@@ -216,6 +213,7 @@ func TestHashNoneReturnsZeros(t *testing.T) {
 	cfg := ValidationConfig{
 		MinBodyBytes: 1, MaxBodyBytes: 4096,
 		AllowedContentTypes: []string{"application/json"},
+		JSON:                noLimitJSONConfig(),
 		Hash:                HashValidationConfig{Algorithm: "none"},
 	}
 	res, err := Validate([]byte(`{}`), "application/json", make([]byte, 32), cfg)
@@ -226,5 +224,18 @@ func TestHashNoneReturnsZeros(t *testing.T) {
 		if b != 0 {
 			t.Error("expected 32 zero bytes for hash=none, got nonzero")
 		}
+	}
+}
+
+// noLimitJSONConfig returns a JSON config with permissive limits, suitable for
+// tests that aren't exercising the JSON-shape validators.
+func noLimitJSONConfig() JSONValidationConfig {
+	return JSONValidationConfig{
+		MaxDepth:           32,
+		MaxStringLength:    65536,
+		MaxKeysPerObject:   256,
+		MaxArrayLength:     1024,
+		RequiredFields:     []string{},
+		AllowAdditionalFields: true,
 	}
 }

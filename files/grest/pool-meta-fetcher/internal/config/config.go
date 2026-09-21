@@ -26,6 +26,7 @@ import (
 type Config struct {
 	DatabaseURL string       `yaml:"database_url"`
 	NetworkName NetworkName  `yaml:"network_name"`
+	SchemaName  string       `yaml:"schema_name"`
 	Fetch       FetchConfig  `yaml:"fetch"`
 	Database    DBConfig     `yaml:"database"`
 	Health      HealthConfig `yaml:"health"`
@@ -260,6 +261,7 @@ func (f LogFormat) Valid() bool {
 func defaults() *Config {
 	return &Config{
 		NetworkName: NetworkMainnet,
+		SchemaName:  "grest",
 		Fetch: FetchConfig{
 			Enabled: true,
 			Poll: PollConfig{
@@ -449,6 +451,22 @@ var configRules = []configRule{
 		if !c.NetworkName.Valid() {
 			return &ValidationError{Field: "network_name", Value: c.NetworkName,
 				Reason: "must be one of mainnet|preprod|preview|sanchonet"}
+		}
+		return nil
+	},
+	// 2a — schema_name must be a valid SQL identifier (letters, digits, underscores;
+	// not starting with a digit; bounded length).
+	func(c *Config) error {
+		s := c.SchemaName
+		if s == "" {
+			return &ValidationError{Field: "schema_name", Value: s, Reason: "required (default is 'grest')"}
+		}
+		if len(s) > 63 {
+			return &ValidationError{Field: "schema_name", Value: s, Reason: "must be <= 63 characters"}
+		}
+		if !(schemaIdentRe.MatchString(s)) {
+			return &ValidationError{Field: "schema_name", Value: s,
+				Reason: "must match ^[A-Za-z_][A-Za-z0-9_]*$ (SQL identifier)"}
 		}
 		return nil
 	},
@@ -737,12 +755,7 @@ var configRules = []configRule{
 				Value: c.Fetch.PoolsOverridesMatch, Reason: "must be exact|glob"}
 		}
 	},
-	// 30
-	allowedOverrideKeys := map[string]bool{
-		"max_body_bytes": true, "timeout_seconds": true,
-		"user_agent": true, "private_ip_policy": true,
-		"enabled": true,
-	}
+	// 30 — pools_overrides[*].overrides keys must be in allowedOverrideKeys
 	func(c *Config) error {
 		for i, ov := range c.Fetch.PoolsOverrides {
 			seen := map[string]bool{}
@@ -776,7 +789,19 @@ var configRules = []configRule{
 
 var (
 	bech32PoolRe = regexp.MustCompile(`^pool1[ac-hij-np-z02-9]{20,}$`)
+	schemaIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
+
+// allowedOverrideKeys is the strict allowlist for keys under
+// fetch.pools_overrides[*].overrides (rule #30). Defined at package scope so
+// the rule body can be a pure expression inside the configRules slice.
+var allowedOverrideKeys = map[string]bool{
+	"max_body_bytes":    true,
+	"timeout_seconds":   true,
+	"user_agent":        true,
+	"private_ip_policy": true,
+	"enabled":           true,
+}
 
 func bech32PoolLike(s string) bool {
 	// Accept either a valid bech32 pool id OR a glob pattern. Glob patterns

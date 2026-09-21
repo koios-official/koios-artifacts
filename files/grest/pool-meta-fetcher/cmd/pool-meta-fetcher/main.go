@@ -90,10 +90,11 @@ func main() {
 	// DB pool.
 	poolCtx, poolCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	pg, err := storage.NewPool(poolCtx, cfg.DatabaseURL, storage.PoolOptions{
-		MaxConns:         cfg.Database.PoolMaxConns,
-		MinConns:         cfg.Database.PoolMinConns,
-		MaxConnLifetime:  cfg.Database.PoolMaxConnLifetime,
-		MaxConnIdleTime:  cfg.Database.PoolMaxConnIdleTime,
+		Schema:          cfg.SchemaName,
+		MaxConns:        cfg.Database.PoolMaxConns,
+		MinConns:        cfg.Database.PoolMinConns,
+		MaxConnLifetime: cfg.Database.PoolMaxConnLifetime,
+		MaxConnIdleTime: cfg.Database.PoolMaxConnIdleTime,
 		StatementTimeout: time.Duration(cfg.Database.StatementTimeoutMs) * time.Millisecond,
 		ApplicationName:  "koios-pool-meta-fetcher",
 	})
@@ -105,26 +106,27 @@ func main() {
 	defer pg.Close()
 	logger.Info("db_pool_ready")
 
-	// Wire readyz + (optionally) adjust meta_bytes check to match max_body_bytes.
+	// Wire readyz.
 	hs.SetPingFn(func(ctx context.Context) error {
 		_, _, pingErr := pg.Ping(ctx)
 		return pingErr
 	})
+
+	// Migrations FIRST (creates the schema), then adjust constraint.
+	migCtx, migCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if err := storage.RunMigrations(migCtx, cfg.DatabaseURL, cfg.SchemaName); err != nil {
+		migCancel()
+		logger.Error("migrations_failed", slog.String("schema", cfg.SchemaName), slog.String("err", err.Error()))
+		os.Exit(exitCodeDB)
+	}
+	migCancel()
+	logger.Info("migrations_applied", slog.String("schema", cfg.SchemaName))
+
 	adjustCtx, adjustCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	if err := pg.AdjustMetaBytesCheckConstraint(adjustCtx, cfg.Fetch.Validation.MaxBodyBytes); err != nil {
 		logger.Warn("adjust_check_failed", slog.String("err", err.Error()))
 	}
 	adjustCancel()
-
-	// Migrations.
-	migCtx, migCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	if err := storage.RunMigrations(migCtx, cfg.DatabaseURL); err != nil {
-		migCancel()
-		logger.Error("migrations_failed", slog.String("err", err.Error()))
-		os.Exit(exitCodeDB)
-	}
-	migCancel()
-	logger.Info("migrations_applied")
 
 	// IP filter (always instantiated — needs policy=allow_all to be a no-op).
 	policy, err := ipfilter.PolicyFromString(string(cfg.Fetch.PrivateIPPolicy))
@@ -167,7 +169,7 @@ func main() {
 	// Cycle driver.
 	f := fetcher.New(cfg, pg, pf, logger)
 	if cfg.Fetch.WorkQueue.ExposeDebugEndpoint {
-		hs.SetSnapshotDebugPools(f.Snapshot)
+		hs.SetSnapshotDebugPools(func() any { return f.Snapshot() })
 	}
 
 	// Daemon root context.

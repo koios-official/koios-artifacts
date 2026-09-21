@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -71,6 +70,15 @@ func (s *Server) SetPingFn(fn PingFunc) {
 			s.lastDB.Store(time.Now().UnixNano())
 		}
 	}
+}
+
+// SetSnapshotDebugPools injects a snapshot function for /debug/pools. Safe to
+// call before Start. The handler is only registered when ExposeDebugPools is
+// set at construction; calling this when expose_debug_endpoint=false has no
+// effect on routing (the handler isn't reachable), but the snapshot is still
+// stored in case it is later enabled by config reload (currently not wired).
+func (s *Server) SetSnapshotDebugPools(fn func() any) {
+	s.cfg.SnapshotDebugPools = fn
 }
 
 // Addr returns the actual bound address (useful when port == 0 for tests).
@@ -174,13 +182,4 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	}
 }
 
-// Self-check that Server satisfies a no-op mutex contract (no fields holding
-// internal state should ever be accessed without sync). Currently unused; reserved
-// for future extension.
-var _ = func() bool {
-	var s *Server
-	var mu sync.Mutex
-	_ = mu
-	_ = s
-	return true
-}()
+// (reserved for future extension)
