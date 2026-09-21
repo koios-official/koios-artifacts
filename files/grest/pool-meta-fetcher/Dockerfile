@@ -1,5 +1,5 @@
 # ---- build stage ----
-FROM golang:1.22-bookworm AS build
+FROM golang:1.25-bookworm AS build
 ARG VERSION=dev
 WORKDIR /src
 

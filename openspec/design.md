@@ -83,7 +83,7 @@ checking the resolved IP before `connect`. We mirror this using a custom
 Override: `allow_private_urls: true` (for local cluster testing; mirrors
 `--allow-private-offchain-urls`).
 
-## 7. Polling cadence: 300 seconds (5 min) default
+## 7. Polling cadence: 432000 seconds (5 days) default for successful pools
 
 Mirrors db-sync default. `poll_interval_seconds` config (default 300). The daemon ticks on
 a single `time.Ticker`; per-pool work is parallelised by a worker pool sized via
@@ -190,7 +190,7 @@ full control.
 |---|---|---|---|
 | P1 | Body size hardcoded to 512 B, rejecting large valid metadata | `OffChain/Http.hs:82` | `fetch.validation.max_body_bytes` (default 524288) + DB CHECK constraint |
 | P2 | Content-Type allowlist is hardcoded with no way to extend | `OffChain/Http.hs:201-209` | `fetch.validation.allowed_content_types` (list) + `fetch.validation.allow_text_html_with_brace` |
-| P3 | Single 5-min poll cadence for all pools, no per-pool rate limiting | `OffChain.hs:308` | `fetch.poll_interval_seconds` + `fetch.min_poll_interval_seconds` (per-pool floor) |
+| P3 | Successful pools cycle every `poll_interval_seconds` (default 432000 = 5 days, matching Cardano mainnet epoch cadence). Failed pools get a fast retry cadence via `failed_pool_retry_seconds` (default 60s), with exponential backoff per row (`base * 2^(count-1)`, capped at 2^10 * base). | `OffChain.hs:308` | `fetch.poll_interval_seconds` + `fetch.failed_pool_retry_seconds` + per-row `next_attempt_at` in `grest.pool_offchain_metadata` |
 | P4 | Backoff curve is hand-coded in Haskell; can't tune `30 + 2^n * 60` | `OffChain/FetchQueue.hs:30-35` | `fetch.retry.backoff_initial_seconds`, `fetch.retry.backoff_max_seconds`, `fetch.retry.max_attempts` |
 | P5 | No HTTP timeout configured; relies on http-client default (~30s) | `OffChain/Http.hs:84` | `fetch.http.timeout_seconds`, `fetch.http.connect_timeout_seconds` |
 | P6 | User-Agent fixed and unmemorable (`cardano-db-sync/...`) | `OffChain/Http.hs:73` | `fetch.http.user_agent` (default `koios-pool-meta-fetcher/<version>`) |

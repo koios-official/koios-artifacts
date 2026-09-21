@@ -28,8 +28,7 @@ type Config struct {
 	PingFn PingFunc
 	// ExposeDebugPools is passed in by the daemon after it has loaded config.
 	ExposeDebugPools bool
-	// SnapshotDebugPools is injected by the fetcher in Phase 3 to return
-	// the most recent in-flight pool data.
+	// SnapshotDebugPools is set after construction; nil until SetSnapshotDebugPools runs.
 	SnapshotDebugPools func() any
 }
 
@@ -182,4 +181,4 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	}
 }
 
-// (reserved for future extension)
+// reserved for future extension

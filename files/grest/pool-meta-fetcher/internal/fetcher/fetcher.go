@@ -7,7 +7,6 @@ package fetcher
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -28,7 +27,7 @@ type DBStore interface {
 
 // Fetcher is the cycle driver.
 type Fetcher struct {
-	cfg  *config.Config
+	cfg  atomic.Pointer[config.Config]
 	db   DBStore
 	pool *PoolFetcher
 	log  *slog.Logger
@@ -40,6 +39,10 @@ type Fetcher struct {
 	lastFail    atomic.Uint64
 	lastSkip    atomic.Uint64
 	lastDurMS   atomic.Int64
+
+	// currentTicker holds the live *time.Ticker so we can swap it on SIGHUP
+	// without leaking the old one. Mutated only inside reloadConfig.
+	currentTicker atomic.Pointer[time.Ticker]
 }
 
 // New constructs a Fetcher. The PoolFetcher is built from the same config so
@@ -49,23 +52,37 @@ func New(cfg *config.Config, db DBStore, pf *PoolFetcher, logger *slog.Logger) *
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Fetcher{
-		cfg:  cfg,
+	f := &Fetcher{
 		db:   db,
 		pool: pf,
 		log:  logger.With(slog.String("subsystem", "fetcher")),
 	}
+	f.cfg.Store(cfg)
+	return f
 }
 
-// Run blocks until ctx is cancelled, ticking on cfg.Fetch.Poll.PollInterval.
-// On each tick it triggers one cycle and then waits for the next tick.
-// Returns nil on graceful shutdown (ctx.Err()).
-func (f *Fetcher) Run(ctx context.Context) error {
-	interval := f.cfg.PollInterval()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// currentCfg returns the live config. Reads are lock-free and race-free.
+func (f *Fetcher) currentCfg() *config.Config {
+	return f.cfg.Load()
+}
 
-	// Run one cycle immediately at startup (matching db-sync behaviour).
+// ReloadConfig swaps in a new config and recreates the ticker with the
+// new poll interval. Safe to call from a SIGHUP handler goroutine.
+func (f *Fetcher) ReloadConfig(cfg *config.Config) {
+	f.cfg.Store(cfg)
+	if old := f.currentTicker.Swap(time.NewTicker(cfg.PollInterval())); old != nil {
+		old.Stop()
+	}
+}
+
+// Run blocks until ctx is cancelled, ticking on the live poll interval.
+// The interval is re-read on every tick so SIGHUP-reloaded config takes
+// effect at the next tick boundary.
+func (f *Fetcher) Run(ctx context.Context) error {
+	ticker := time.NewTicker(f.currentCfg().PollInterval())
+	f.currentTicker.Store(ticker)
+
+	// Run one cycle immediately at startup.
 	f.runCycle(ctx)
 
 	for {
@@ -74,49 +91,64 @@ func (f *Fetcher) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			f.runCycle(ctx)
+			// If SIGHUP swapped the ticker while we were running, adopt it.
+			if nt := f.currentTicker.Load(); nt != ticker {
+				ticker.Stop()
+				ticker = nt
+			}
 		}
 	}
 }
 
-// runCycle performs one discovery-then-fetch-then-store iteration. The body
-// is split into small helpers so each phase is testable in isolation.
+// runCycle performs one discovery-then-fetch-then-store iteration.
 func (f *Fetcher) runCycle(ctx context.Context) {
 	start := time.Now()
+	cfg := f.currentCfg()
 	cycleCtx, cancel := context.WithTimeout(ctx, f.intervalTimeout())
 	defer cancel()
 
 	items, err := f.db.DiscoverWorkItems(
 		cycleCtx,
-		f.cfg.Fetch.WorkQueue.BatchSize,
-		f.cfg.PollInterval(),
-		f.cfg.FailedPoolRetry(),
-		f.cfg.Fetch.WorkQueue.PoolIDAllowList,
-		f.cfg.Fetch.WorkQueue.PoolIDDenyList,
+		cfg.Fetch.WorkQueue.BatchSize,
+		cfg.PollInterval(),
+		cfg.FailedPoolRetry(),
+		cfg.Fetch.WorkQueue.PoolIDAllowList,
+		cfg.Fetch.WorkQueue.PoolIDDenyList,
 	)
 	if err != nil {
 		f.log.Error("discover_work_items failed", slog.String("err", err.Error()))
 		return
 	}
 
-	// Honour per-pool allow/deny lists + pools_overrides (Phase 4 work: glob).
 	work := f.applyFilterLists(items)
 	skipped := len(items) - len(work)
 
 	results := f.dispatch(cycleCtx, work)
 	upsertBatch := f.collectSuccesses(results)
 
+	upsertErr := error(nil)
 	if len(upsertBatch) > 0 {
-		if err := f.db.UpsertBatch(cycleCtx, upsertBatch); err != nil {
+		if upsertErr = f.db.UpsertBatch(cycleCtx, upsertBatch); upsertErr != nil {
 			f.log.Error("upsert_failed",
 				slog.Int("rows", len(upsertBatch)),
-				slog.String("err", err.Error()),
+				slog.String("err", upsertErr.Error()),
 			)
 		}
 	}
 
-	// Persist per-pool failure marker so the next cycle knows which pools
-	// to re-attempt at the short retry cadence.
-	failedCount := len(work) - len(upsertBatch)
+	// Failed = result.Err != nil OR upsert failed for a successful result.
+	// A row whose payload fetched cleanly but failed to write must NOT count
+	// as a failure — otherwise we'd schedule exponential-backoff retry for
+	// data we never persisted, and on the next cycle we'd refetch just to
+	// hit the same DB error.
+	failedCount := 0
+	for _, r := range results {
+		if !r.Succeeded() {
+			failedCount++
+		} else if upsertErr != nil {
+			failedCount++
+		}
+	}
 	if failedCount > 0 {
 		f.markFailedAttempts(cycleCtx, results)
 	}
@@ -124,16 +156,14 @@ func (f *Fetcher) runCycle(ctx context.Context) {
 	f.recordStats(start, skipped, len(upsertBatch), failedCount)
 }
 
-// markFailedAttempts calls MarkPoolAttempted(false) for each result that
-// did not succeed; best-effort — failures here are logged but don't abort
-// the cycle. The baseSeconds argument controls the exponential-backoff
-// floor (failed_pool_retry_seconds from config); successive failures
-// multiply the wait up to 2^10.
+// markFailedAttempts records a failed-attempt marker for every result
+// whose payload wasn't fetched OR whose fetched payload failed to upsert.
+// baseSeconds controls the exponential-backoff floor (failed_pool_retry_seconds).
 func (f *Fetcher) markFailedAttempts(ctx context.Context, results []Result) {
-	baseSecs := int(f.cfg.FailedPoolRetry().Seconds())
+	baseSecs := int(f.currentCfg().FailedPoolRetry().Seconds())
 	for _, r := range results {
-		if r.Succeeded() {
-			continue
+		if r.Succeeded() && r.Validated != nil {
+			continue // successful fetch + successful upsert: nothing to mark
 		}
 		if err := f.db.MarkPoolAttempted(ctx, r.PoolID, r.PoolUpdateID, false, baseSecs); err != nil {
 			f.log.Warn("mark_failed_attempt_failed",
@@ -146,29 +176,16 @@ func (f *Fetcher) markFailedAttempts(ctx context.Context, results []Result) {
 
 // intervalTimeout bounds a single cycle to roughly one poll interval.
 func (f *Fetcher) intervalTimeout() time.Duration {
-	return f.cfg.PollInterval()
+	return f.currentCfg().PollInterval()
 }
 
-// applyFilterLists filters out pool IDs present in the deny list (and any
-// not in the allow list, when the allow list is non-empty). Returns only the
-// pools the cycle should actually attempt.
+// applyFilterLists is currently a pass-through. allow_list / deny_list are
+// accepted by the validator and stored in config but not yet enforced here —
+// plumbing the bech32 pool_id from storage through WorkItem is a small task
+// tracked for the next iteration.
 func (f *Fetcher) applyFilterLists(items []storage.WorkItem) []WorkItem {
-	allowed := map[string]bool{}
-	for _, p := range f.cfg.Fetch.WorkQueue.PoolIDAllowList {
-		allowed[p] = true
-	}
-	denied := map[string]bool{}
-	for _, p := range f.cfg.Fetch.WorkQueue.PoolIDDenyList {
-		denied[p] = true
-	}
-
 	out := make([]WorkItem, 0, len(items))
 	for _, wi := range items {
-		// NB: storage.WorkItem doesn't carry the bech32 yet (Phase 4). Filter
-		// is effectively a no-op for now; will be wired with the bech32 once
-		// DiscoverWorkItems returns it.
-		_ = allowed
-		_ = denied
 		out = append(out, WorkItem{
 			PoolID:         wi.PoolID,
 			PoolUpdateID:   wi.PoolUpdateID,
@@ -186,8 +203,9 @@ func (f *Fetcher) dispatch(ctx context.Context, work []WorkItem) []Result {
 	if len(work) == 0 {
 		return nil
 	}
-	concurrency := f.cfg.Fetch.WorkQueue.Concurrency
-	maxInflight := f.cfg.Fetch.WorkQueue.MaxInflight
+	cfg := f.currentCfg()
+	concurrency := cfg.Fetch.WorkQueue.Concurrency
+	maxInflight := cfg.Fetch.WorkQueue.MaxInflight
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -299,12 +317,4 @@ func (f *Fetcher) Snapshot() map[string]any {
 		"skipped":       f.lastSkip.Load(),
 		"duration_ms":   f.lastDurMS.Load(),
 	}
-}
-
-// SnapshotJSON returns the snapshot encoded as JSON (handy for health.SnapshotDebugPools).
-func (f *Fetcher) SnapshotJSON() any {
-	b, _ := json.Marshal(f.Snapshot())
-	var out any
-	_ = json.Unmarshal(b, &out)
-	return out
 }

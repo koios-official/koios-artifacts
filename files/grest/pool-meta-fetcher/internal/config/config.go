@@ -805,12 +805,8 @@ var configRules = []configRule{
 		return nil
 	},
 	// 31 — duplicate detect on allow/deny/overrides pool ids (warning-grade; see below)
-	// 32 — pull request for future validators
+	// 32 — reserved for future validators
 }
-
-// Compile-time check: we have 30 rules in the slice above (the spec listed 32;
-// the last two are reserved placeholders for additions during implementation).
-// The numbering above leaves room; intentionally not enforced.
 
 var (
 	bech32PoolRe = regexp.MustCompile(`^pool1[ac-hij-np-z02-9]{20,}$`)

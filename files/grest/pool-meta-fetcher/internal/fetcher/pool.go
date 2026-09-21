@@ -149,8 +149,8 @@ func (p *PoolFetcher) Fetch(ctx context.Context, w WorkItem) *Result {
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		category := classifyTransportCategory(err)
-		httpResult.Err = p.classifyTransportErr(err)
+		category, classified := classifyTransport(err)
+		httpResult.Err = classified
 		httpResult.Duration = time.Since(start)
 		p.persistError(ctx, w, httpResult, nil, category, err.Error())
 		return p.record(w, httpResult)
@@ -234,52 +234,28 @@ func (p *PoolFetcher) persistError(ctx context.Context, w WorkItem, r *Result, b
 	}
 }
 
-// classifyTransportErr turns a net error from client.Do into a tagged
-// error wrapping the original. The category is the prefix before the colon.
-func (p *PoolFetcher) classifyTransportErr(err error) error {
+// classifyTransport returns the (category, wrapped-error) pair for a
+// transport error from client.Do. The category is suitable for the
+// error_class column; the wrapped error has the prefix attached so logs
+// are grep-friendly.
+func classifyTransport(err error) (string, error) {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "context deadline exceeded"):
-		return fmt.Errorf("timeout: %w", err)
+		return "timeout", fmt.Errorf("timeout: %w", err)
 	case strings.Contains(msg, "no such host"):
-		return fmt.Errorf("dns_failure: %w", err)
+		return "dns_failure", fmt.Errorf("dns_failure: %w", err)
 	case strings.Contains(msg, "connection refused"):
-		return fmt.Errorf("connection_refused: %w", err)
+		return "connection_refused", fmt.Errorf("connection_refused: %w", err)
 	case strings.Contains(msg, "connection reset"):
-		return fmt.Errorf("connection_reset: %w", err)
+		return "connection_reset", fmt.Errorf("connection_reset: %w", err)
 	case strings.Contains(msg, "tls: "):
-		return fmt.Errorf("tls_failure: %w", err)
+		return "tls_failure", fmt.Errorf("tls_failure: %w", err)
 	case strings.Contains(msg, "ip_blocked"):
-		return fmt.Errorf("ip_blocked: %w", err)
+		return "ip_blocked", fmt.Errorf("ip_blocked: %w", err)
 	default:
-		return fmt.Errorf("transport_other: %w", err)
+		return "transport_other", fmt.Errorf("transport_other: %w", err)
 	}
-}
-
-// classifyTransportCategory returns just the category string ("timeout",
-// "dns_failure", etc.) suitable for the error_class column.
-func classifyTransportCategory(err error) string {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "context deadline exceeded"):
-		return "timeout"
-	case strings.Contains(msg, "no such host"):
-		return "dns_failure"
-	case strings.Contains(msg, "connection refused"):
-		return "connection_refused"
-	case strings.Contains(msg, "connection reset"):
-		return "connection_reset"
-	case strings.Contains(msg, "tls: "):
-		return "tls_failure"
-	case strings.Contains(msg, "ip_blocked"):
-		return "ip_blocked"
-	default:
-		return "transport_other"
-	}
-}
-
-func (p *PoolFetcher) transportErrDetail(err error) string {
-	return truncate(err.Error(), 1024)
 }
 
 func classifyValidatorErr(err error) string {
@@ -344,8 +320,9 @@ func (p *PoolFetcher) UserAgent() string {
 	return p.ua
 }
 
-// bech32 returns the pool's bech32 ID for ipfilter context. Currently empty;
-// callers should enrich WorkItem with the bech32 string upstream (Phase 4).
+// bech32 returns the pool's bech32 ID for ipfilter context. Stub until
+// WorkItem carries a bech32 field; the per-pool allow_list exemption is
+// therefore inactive in production.
 func (w WorkItem) bech32() string { return "" }
 
 // -----------------------------------------------------------------------------

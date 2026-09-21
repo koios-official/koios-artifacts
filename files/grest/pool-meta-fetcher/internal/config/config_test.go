@@ -162,20 +162,8 @@ func TestRetryBackoffDelay(t *testing.T) {
 	c.Fetch.Retry.BackoffMaxSeconds = 1000
 	c.Fetch.Retry.BackoffMultiplierSeconds = 60
 
+	// Formula: delay(n) = min(max, initial + 2^n * multiplier).
 	cases := []struct {
-		attempt int
-		want    time.Duration
-	}{
-		{0, 30 * time.Second},                           // 30 + 2^0 * 60 = 90... but spec says initial. We use 30 + 2^n * 60.
-	}
-	// The formula is delay(n) = min(max, initial + 2^n * multiplier).
-	// attempt=0: 30 + 1 * 60 = 90
-	// attempt=1: 30 + 2 * 60 = 150
-	// attempt=2: 30 + 4 * 60 = 270
-	// attempt=3: 30 + 8 * 60 = 510
-	// attempt=4: 30 + 16 * 60 = 990
-	// attempt=5: min(1000, 30 + 32*60=1950) = 1000
-	cases = []struct {
 		attempt int
 		want    time.Duration
 	}{

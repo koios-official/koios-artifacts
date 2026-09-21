@@ -121,17 +121,13 @@ func (p *Pool) DiscoverWorkItems(
 	allowList, denyList []string,
 ) ([]WorkItem, error) {
 	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
-	// Dual-cadence retry: successful pools use pollStaleAfter; pools whose
-	// most-recent attempt was a failure use failedRetryAfter. This means
-	// "the cron pulls every X minutes, but the cycle only re-fetches failed
-	// pools on the short cadence." Capture stale intervals as integers.
-	var pollSecs, retrySecs int64 = int64(pollStaleAfter.Seconds()), int64(failedRetryAfter.Seconds())
+	// Per-pool retry cadence is encoded in next_attempt_at by MarkPoolAttempted;
+	// the failedRetryAfter argument is accepted for backward-compat but unused.
+	var pollSecs int64 = int64(pollStaleAfter.Seconds())
 	if pollSecs <= 0 {
 		pollSecs = 60
 	}
-	if retrySecs <= 0 {
-		retrySecs = 60
-	}
+	_ = failedRetryAfter
 	q := fmt.Sprintf(`
 WITH latest_pu AS (
   SELECT DISTINCT ON (pu.hash_id)
@@ -166,10 +162,6 @@ WHERE pmr.url IS NOT NULL
   )
 LIMIT $2;
 `, schemaIdent)
-	var staleSecs int64 = int64(pollStaleAfter.Seconds())
-	if staleSecs <= 0 {
-		staleSecs = 1
-	}
 	rows, err := p.Query(ctx, q, pollSecs, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("discover work: %w", err)
@@ -190,20 +182,11 @@ LIMIT $2;
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate work items: %w", err)
 	}
-	// Phase 3 will apply allowList/denyList here.
+	// allowList / denyList: accepted for spec compliance; filtering happens
+	// once WorkItem carries a bech32 (next iteration).
 	_ = allowList
 	_ = denyList
 	return items, nil
-}
-
-// NewPoolWithSchema is like NewPool but takes an explicit schema name. The
-// schema must already exist in the database (created by migrations or by hand);
-// the daemon does not CREATE SCHEMA on startup.
-func NewPoolWithSchema(ctx context.Context, dbURL, schema string, opts PoolOptions) (*Pool, error) {
-	if schema != "" {
-		opts.Schema = schema
-	}
-	return NewPool(ctx, dbURL, opts)
 }
 
 // Schema returns the configured schema name (defaults to "grest").
@@ -248,6 +231,7 @@ func (p *Pool) UpsertBatch(ctx context.Context, batch []PoolMetadata) error {
 	schemaIdent := pgx.Identifier{p.Schema()}.Sanitize()
 	tableIdent := pgx.Identifier{p.Schema(), "pool_offchain_metadata"}.Sanitize()
 	stageIdent := pgx.Identifier{"pmf_stage"}.Sanitize()
+	_ = schemaIdent // tableIdent already encodes the schema; this kept for clarity in case the stage ever differs.
 
 	// Stage the batch into a temp table (LIKE target) and merge with ON
 	// CONFLICT. Concurrent per-cycle runs would NOT collide because the
@@ -315,7 +299,6 @@ ON CONFLICT (pool_id) DO UPDATE SET
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit upsert tx: %w", err)
 	}
-	_ = schemaIdent
 	return nil
 }
 
@@ -626,20 +609,8 @@ func substituteSchema(src, schema string) string {
 
 var reLeadingGrest = regexp.MustCompile(`(^|[^A-Za-z0-9_])grest\.`)
 
-// migrationsSource picks the migration directory to use. Phase 2 ships with
-// the SQL files co-located under files/grest/rpc relative to the repo root;
-// operators can override by setting KOIOS_MIGRATIONS_DIR.
-func migrationsSource() string {
-	if d := osGetenvFunc("KOIOS_MIGRATIONS_DIR"); d != "" {
-		return "file://" + d
-	}
-	if existsDir("migrations") {
-		return "file://migrations"
-	}
-	// Default to the repo-relative source so the daemon can run from the
-	// files/grest/pool-meta-fetcher directory during development.
-	return "file://../rpc"
-}
+// buildMigrationsSource picks the migration directory to use. Embedded
+// migrations/*.sql ship with the binary; KOIOS_MIGRATIONS_DIR overrides for dev.
 
 func existsDir(p string) bool {
 	if p == "" {

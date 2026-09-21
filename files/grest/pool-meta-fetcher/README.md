@@ -120,7 +120,7 @@ Each row corresponds to a known db-sync limitation; see the OpenSpec's
 |---|---|---|
 | 512 B body cap hardcoded | `fetch.validation.max_body_bytes` | `524288` (512 KiB) |
 | Content-Type allowlist hardcoded | `fetch.validation.allowed_content_types` | editable list |
-| Single 5-min tick, no per-pool floor | `fetch.poll.poll_interval_seconds`, `fetch.poll.min_poll_interval_seconds` | `300`, `60` |
+| Long successful-pool cycle + fast transient-failure retry | `fetch.poll.poll_interval_seconds`, `fetch.poll.failed_pool_retry_seconds`, `fetch.poll.min_poll_interval_seconds` | `432000` (5d), `60`, `60` |
 | Haskell-hardcoded backoff | `fetch.retry.{backoff_initial,backoff_max,backoff_multiplier}_seconds` | `30`, `86400`, `60` |
 | No HTTP timeout | `fetch.http.{timeout,connect_timeout}_seconds` | `30`, `10` |
 | Fixed user-agent | `fetch.http.user_agent` | `koios-pool-meta-fetcher/<ver>` |

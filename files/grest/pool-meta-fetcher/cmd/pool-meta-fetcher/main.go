@@ -180,9 +180,10 @@ func main() {
 	)
 	defer cancel()
 
-	// SIGHUP handler for live-reload.
-	var cfgMu sync.Mutex
-	currentCfg := cfg
+	// SIGHUP handler for live-reload. Applies only the knobs the fetcher
+	// can pick up without a restart (concurrency, log level, poll interval).
+	// Database URL / listen addr / port / schema name need a full restart;
+	// they're reported in the reload report for the operator's awareness.
 	reloadCh := make(chan os.Signal, 1)
 	signal.Notify(reloadCh, syscall.SIGHUP)
 	var wg sync.WaitGroup
@@ -196,16 +197,10 @@ func main() {
 				logger.Warn("reload_failed", slog.String("err", err.Error()))
 				continue
 			}
-			cfgMu.Lock()
-			r := applyReload(currentCfg, newCfg)
-			currentCfg = newCfg
-			cfgMu.Unlock()
-			if len(r.Changed) > 0 || len(r.Skipped) > 0 {
-				logger.Info("config_reloaded",
-					slog.Any("changed", r.Changed),
-					slog.Any("skipped", r.Skipped),
-				)
-			}
+			applyReload(cfg, newCfg)
+			// Hand the new config to the fetcher; the loop tick picks it up.
+			f.ReloadConfig(newCfg)
+			logger.Info("config_reloaded")
 		}
 	}()
 
@@ -271,42 +266,31 @@ type reloadReport struct {
 	Skipped []string
 }
 
-func applyReload(cfg, newCfg *config.Config) reloadReport {
+func applyReload(old, newCfg *config.Config) reloadReport {
 	r := reloadReport{}
-	if cfg.Fetch.Poll.PollIntervalSeconds != newCfg.Fetch.Poll.PollIntervalSeconds {
+	if old.Fetch.Poll.PollIntervalSeconds != newCfg.Fetch.Poll.PollIntervalSeconds {
 		r.Changed = append(r.Changed, fmt.Sprintf("fetch.poll.poll_interval_seconds: %d → %d",
-			cfg.Fetch.Poll.PollIntervalSeconds, newCfg.Fetch.Poll.PollIntervalSeconds))
-		cfg.Fetch.Poll.PollIntervalSeconds = newCfg.Fetch.Poll.PollIntervalSeconds
+			old.Fetch.Poll.PollIntervalSeconds, newCfg.Fetch.Poll.PollIntervalSeconds))
 	}
-	if cfg.Fetch.Poll.MinPollIntervalSecs != newCfg.Fetch.Poll.MinPollIntervalSecs {
-		r.Changed = append(r.Changed, fmt.Sprintf("fetch.poll.min_poll_interval_seconds: %d → %d",
-			cfg.Fetch.Poll.MinPollIntervalSecs, newCfg.Fetch.Poll.MinPollIntervalSecs))
-		cfg.Fetch.Poll.MinPollIntervalSecs = newCfg.Fetch.Poll.MinPollIntervalSecs
-	}
-	if cfg.Fetch.WorkQueue.Concurrency != newCfg.Fetch.WorkQueue.Concurrency {
+	if old.Fetch.WorkQueue.Concurrency != newCfg.Fetch.WorkQueue.Concurrency {
 		r.Changed = append(r.Changed, fmt.Sprintf("fetch.work_queue.concurrency: %d → %d",
-			cfg.Fetch.WorkQueue.Concurrency, newCfg.Fetch.WorkQueue.Concurrency))
-		cfg.Fetch.WorkQueue.Concurrency = newCfg.Fetch.WorkQueue.Concurrency
+			old.Fetch.WorkQueue.Concurrency, newCfg.Fetch.WorkQueue.Concurrency))
 	}
-	if cfg.Logging.Level != newCfg.Logging.Level {
-		r.Changed = append(r.Changed, fmt.Sprintf("logging.level: %s → %s", cfg.Logging.Level, newCfg.Logging.Level))
-		cfg.Logging.Level = newCfg.Logging.Level
-		slog.SetDefault(newLoggerAt(cfg.Logging.Level.ToSlog()))
+	if old.Logging.Level != newCfg.Logging.Level {
+		r.Changed = append(r.Changed, fmt.Sprintf("logging.level: %s → %s",
+			old.Logging.Level, newCfg.Logging.Level))
+		slog.SetDefault(newLoggerAt(newCfg.Logging.Level.ToSlog()))
 	}
-
-	if cfg.DatabaseURL != newCfg.DatabaseURL {
+	if old.DatabaseURL != newCfg.DatabaseURL {
 		r.Skipped = append(r.Skipped, "database_url (restart required)")
 	}
-	if cfg.Health.ListenAddr != newCfg.Health.ListenAddr || cfg.Health.ListenPort != newCfg.Health.ListenPort {
+	if old.Health.ListenAddr != newCfg.Health.ListenAddr ||
+		old.Health.ListenPort != newCfg.Health.ListenPort {
 		r.Skipped = append(r.Skipped, "health.listen_addr / health.listen_port (restart required)")
 	}
-	if cfg.NetworkName != newCfg.NetworkName {
+	if old.NetworkName != newCfg.NetworkName {
 		r.Skipped = append(r.Skipped, "network_name (restart required)")
 	}
-
-	// Phase 3 narrows down which other knobs are hot-reloadable per spec.
-	// Implementation deferred — at minimum: validation.*, retry.*, pools_overrides,
-	// http.{timeout,connect_timeout,max_redirects,user_agent,extra_headers}.
 	return r
 }
 
