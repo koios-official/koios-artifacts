@@ -32,13 +32,13 @@ For the full change rationale see
 make build
 
 # Create config
-cp pool-meta-fetcher.example.yaml /etc/koios/pool-meta-fetcher.yaml
-$EDITOR /etc/koios/pool-meta-fetcher.yaml
+cp pool-meta-fetcher.example.yaml $CNODE_HOME/priv/pool-meta-fetcher.yaml
+$EDITOR $CNODE_HOME/priv/pool-meta-fetcher.yaml
 
 # Run
-./pool-meta-fetcher --config /etc/koios/pool-meta-fetcher.yaml
+./pool-meta-fetcher --config $CNODE_HOME/priv/pool-meta-fetcher.yaml
 
-# Run under systemd
+# Run under systemd (the unit file already wires ExecStart to the right path)
 sudo install systemd/koios-pool-meta-fetcher.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now koios-pool-meta-fetcher

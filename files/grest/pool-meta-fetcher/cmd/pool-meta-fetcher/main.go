@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	defaultConfigPath = "/etc/koios/pool-meta-fetcher.yaml"
+	defaultConfigPath = "$CNODE_HOME/priv/pool-meta-fetcher.yaml"
 	exitCodeConfig    = 2
 	exitCodeDB        = 3
 	exitCodeRuntime   = 1
